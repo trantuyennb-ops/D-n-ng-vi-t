@@ -43,11 +43,6 @@ jobs:
           cp app/build/outputs/apk/release/*.apk out/DanDuongViet.apk
           ls -la out
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: DanDuongViet-apk
-          path: out/DanDuongViet.apk
-
       - name: Publish release "latest"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
