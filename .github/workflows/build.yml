@@ -1,0 +1,58 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tải thư viện bản đồ Leaflet vào app
+        run: |
+          mkdir -p app/src/main/assets/leaflet/images
+          B=https://unpkg.com/leaflet@1.9.4/dist
+          curl -fsSL $B/leaflet.js  -o app/src/main/assets/leaflet/leaflet.js
+          curl -fsSL $B/leaflet.css -o app/src/main/assets/leaflet/leaflet.css
+          for f in layers.png layers-2x.png marker-icon.png marker-icon-2x.png marker-shadow.png; do
+            curl -fsSL $B/images/$f -o app/src/main/assets/leaflet/images/$f
+          done
+          ls -la app/src/main/assets/leaflet
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.9.1"
+
+      - name: Build release APK
+        run: gradle assembleRelease --stacktrace
+
+      - name: Rename APK
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/release/*.apk out/DanDuongViet.apk
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DanDuongViet-apk
+          path: out/DanDuongViet.apk
+
+      - name: Publish release "latest"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest out/DanDuongViet.apk \
+            --title "Dẫn Đường Việt bản mới nhất (build ${{ github.run_number }})" \
+            --notes "Tải file DanDuongViet.apk bên dưới về điện thoại Android 8 trở lên để cài."
