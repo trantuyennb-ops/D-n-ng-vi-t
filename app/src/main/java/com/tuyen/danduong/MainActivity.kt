@@ -25,7 +25,15 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.webkit.WebViewAssetLoader
+import java.io.ByteArrayInputStream
+import java.net.URL
+import java.security.KeyStore
+import java.security.cert.CertificateFactory
 import java.util.Locale
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLSocketFactory
+import javax.net.ssl.TrustManagerFactory
 
 class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
@@ -37,6 +45,54 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var wantLocation = false
     private var lastGpsTime = 0L
     private val main = Handler(Looper.getMainLooper())
+    private var userAgent = ""
+
+    // Android cũ (dưới 7.1) thiếu chứng chỉ gốc Let's Encrypt mà máy chủ bản đồ/tìm đường dùng.
+    // Trên các máy đó, app tự tải dữ liệu bằng chứng chỉ đóng kèm thay cho WebView.
+    private val needOwnTls = Build.VERSION.SDK_INT < 25
+    private val sslFactory: SSLSocketFactory? by lazy {
+        try {
+            val ks = KeyStore.getInstance(KeyStore.getDefaultType()); ks.load(null, null)
+            val sys = KeyStore.getInstance("AndroidCAStore"); sys.load(null, null)
+            for (a in sys.aliases()) ks.setCertificateEntry(a, sys.getCertificate(a))
+            val cf = CertificateFactory.getInstance("X.509")
+            listOf(R.raw.isrg_root_x1, R.raw.isrg_root_x2).forEachIndexed { i, id ->
+                resources.openRawResource(id).use { ks.setCertificateEntry("dd_extra_$i", cf.generateCertificate(it)) }
+            }
+            val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()); tmf.init(ks)
+            val ctx = SSLContext.getInstance("TLS"); ctx.init(null, tmf.trustManagers, null)
+            ctx.socketFactory
+        } catch (e: Exception) { null }
+    }
+    private val skipHeaders = setOf("accept-encoding", "if-none-match", "if-modified-since", "range", "origin")
+
+    private fun nativeFetch(req: WebResourceRequest): WebResourceResponse? {
+        val f = sslFactory ?: return null
+        return try {
+            val c = URL(req.url.toString()).openConnection() as HttpsURLConnection
+            c.sslSocketFactory = f
+            c.connectTimeout = 15000; c.readTimeout = 25000
+            c.instanceFollowRedirects = true
+            req.requestHeaders?.forEach { (k, v) -> if (k.lowercase() !in skipHeaders) c.setRequestProperty(k, v) }
+            c.setRequestProperty("User-Agent", userAgent)
+            val code = c.responseCode
+            if (code in 300..399) return null
+            val stream = (if (code >= 400) c.errorStream else c.inputStream) ?: ByteArrayInputStream(ByteArray(0))
+            val ct = c.contentType ?: "application/octet-stream"
+            val mime = ct.substringBefore(';').trim()
+            val enc = Regex("charset=([^;]+)", RegexOption.IGNORE_CASE).find(ct)?.groupValues?.get(1)?.trim()
+            val headers = HashMap<String, String>()
+            for ((k, v) in c.headerFields) {
+                if (k == null || v.isNullOrEmpty()) continue
+                val lk = k.lowercase()
+                if (lk == "content-encoding" || lk == "content-length" || lk == "transfer-encoding" || lk.startsWith("access-control")) continue
+                headers[k] = v.joinToString(",")
+            }
+            headers["Access-Control-Allow-Origin"] = "*"
+            val reason = c.responseMessage?.takeIf { it.isNotBlank() } ?: "OK"
+            WebResourceResponse(mime, enc, code, reason, headers, stream)
+        } catch (e: Exception) { null }
+    }
 
     private val listener = object : LocationListener {
         override fun onLocationChanged(loc: Location) {
@@ -79,10 +135,15 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             mediaPlaybackRequiresUserGesture = false
             userAgentString = "$userAgentString DanDuongViet/1.0 (Android navigation app)"
         }
+        userAgent = web.settings.userAgentString
         web.addJavascriptInterface(Bridge(), "Android")
         web.webViewClient = object : WebViewClient() {
-            override fun shouldInterceptRequest(view: WebView, req: WebResourceRequest): WebResourceResponse? =
-                assetLoader.shouldInterceptRequest(req.url)
+            override fun shouldInterceptRequest(view: WebView, req: WebResourceRequest): WebResourceResponse? {
+                val u = req.url
+                if (u.host == "appassets.androidplatform.net") return assetLoader.shouldInterceptRequest(u)
+                if (needOwnTls && u.scheme == "https" && req.method == "GET") return nativeFetch(req)
+                return null
+            }
 
             override fun shouldOverrideUrlLoading(view: WebView, req: WebResourceRequest): Boolean {
                 val u = req.url
