@@ -173,11 +173,13 @@ const baseStreet = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
 // Vệ tinh nét cao: ảnh Esri Clarity (ít nén, sắc nét hơn), tải ảnh độ phân giải cao cho màn hình điện thoại (retina),
 // phóng to tới mức 21; dự phòng sang Esri World Imagery nếu ô ảnh Clarity lỗi.
 const isHiDPI = (window.devicePixelRatio || 1) > 1.4;
-const SAT_OPT = {maxZoom: 21, maxNativeZoom: 19, detectRetina: isHiDPI, keepBuffer: 4, updateWhenZooming: false, attribution: '© Esri, Maxar, Earthstar Geographics'};
+// Esri chỉ có ảnh tới mức 18 ở nhiều nơi (mức 19 trả về ô xám) -> giới hạn ảnh tải về ở mức 18, phóng to hơn thì kéo giãn
+const SAT_NATIVE = isHiDPI ? 17 : 18; // màn hình nét cao tự cộng thêm 1 mức
+const SAT_OPT = {maxZoom: 21, maxNativeZoom: SAT_NATIVE, detectRetina: isHiDPI, keepBuffer: 4, updateWhenZooming: false, attribution: '© Esri, Maxar, Earthstar Geographics'};
 const satClarity = L.tileLayer('https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', SAT_OPT);
 satClarity.on('tileerror', ev => { ev.tile.onerror = null; ev.tile.src = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/' + ev.coords.z + '/' + ev.coords.y + '/' + ev.coords.x; });
 map.createPane('labels'); map.getPane('labels').style.zIndex = 350; map.getPane('labels').style.pointerEvents = 'none';
-const REF_OPT = {maxZoom: 21, maxNativeZoom: 19, detectRetina: isHiDPI, pane: 'labels'};
+const REF_OPT = {maxZoom: 21, maxNativeZoom: SAT_NATIVE, detectRetina: isHiDPI, pane: 'labels'};
 const baseSat = L.layerGroup([
   satClarity,
   L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}', Object.assign({opacity: .75}, REF_OPT)),
