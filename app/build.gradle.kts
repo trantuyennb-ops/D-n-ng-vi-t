@@ -24,6 +24,9 @@ android {
             storePassword = "danduong2026"
             keyAlias = "danduong"
             keyPassword = "danduong2026"
+            // Ký cả kiểu cũ (v1) để màn hình ô tô / máy Android đời cũ cài được
+            enableV1Signing = true
+            enableV2Signing = true
         }
     }
 
