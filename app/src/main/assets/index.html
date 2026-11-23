@@ -70,6 +70,7 @@ button{font:inherit;cursor:pointer;border:0}
 #camBadge{margin-top:8px;background:#f9ab00;color:#000;font-weight:700;border-radius:10px;padding:6px 10px;font-size:15px;width:max-content}
 .cam{font-size:16px;line-height:24px;text-align:center;background:#fff;border:2px solid #f9ab00;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,.35)}
 .pop small{display:block;color:#5f6368;margin-top:4px}
+body.night:not(.sat) .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.9) contrast(.9)}
 body.night .card{background:#202124;color:#e8eaed}
 body.night .row input{background:#303134;border-color:#5f6368;color:#e8eaed}
 body.night #modes button,body.night .btns button,body.night #alts button,body.night #swap,body.night #clr,body.night #fabs button{background:#303134;color:#e8eaed}
@@ -254,20 +255,19 @@ baseStreet.addTo(map);
 let sat = false;
 $('btnLayer').onclick = () => {
   sat = !sat;
+  document.body.classList.toggle('sat', sat);
   if (sat) { map.removeLayer(streetLayer()); baseSat.addTo(map); $('btnLayer').textContent = '🗺'; }
   else { map.removeLayer(baseSat); streetLayer().addTo(map); $('btnLayer').textContent = '🛰'; }
 };
-// Bản đồ tối ban đêm (18h–6h) như Google Maps, đỡ chói mắt khi lái xe
-const baseNight = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {maxZoom: 21, maxNativeZoom: 20, subdomains: 'abcd', attribution: '© OpenStreetMap © CARTO'});
+// Bản đồ tối ban đêm (18h–6h) như Google Maps, đỡ chói mắt khi lái xe: làm tối bản đồ thường bằng bộ lọc màu
 let night = false;
 function isNight() { const h = new Date().getHours(); return h >= 18 || h < 6; }
-function streetLayer() { return night ? baseNight : baseStreet; }
+function streetLayer() { return baseStreet; }
 function applyNight() {
   const n = isNight();
   if (n === night) return;
-  const old = streetLayer(); night = n;
+  night = n;
   document.body.classList.toggle('night', n);
-  if (!sat) { map.removeLayer(old); streetLayer().addTo(map); }
 }
 applyNight(); setInterval(applyNight, 60000);
 
@@ -555,9 +555,10 @@ function drawRoutes(fit) {
   const r = S.routes[S.sel];
   S.layers.push(L.polyline(r.coords, {color: '#185abc', weight: 10, opacity: 1}).addTo(map));
   S.layers.push(L.polyline(r.coords, {color: '#4285f4', weight: 6, opacity: 1}).addTo(map));
-  if (fit) map.fitBounds(L.latLngBounds(r.coords), {paddingTopLeft: [30, 200], paddingBottomRight: [30, 260]});
+  if (fit) map.fitBounds(L.latLngBounds(r.coords), isLand() ? {paddingTopLeft: [440, 40], paddingBottomRight: [90, 40]} : {paddingTopLeft: [30, 200], paddingBottomRight: [30, 260]});
 }
 
+function isLand() { return innerWidth > innerHeight && innerWidth >= 700; }
 function showSheet() {
   $('sheet').hidden = false;
   const alts = $('alts'); alts.innerHTML = '';
@@ -817,7 +818,7 @@ function navUpdate() {
   if (S.follow) {
     const z = dNext < 200 ? 18 : ((S.speed || 0) > 15 ? 15 : fast ? 16 : 17);
     const size = map.getSize();
-    const pt = map.project(S.me, z).subtract([0, size.y * 0.18]);
+    const pt = map.project(S.me, z).subtract(isLand() ? [210, size.y * 0.15] : [0, size.y * 0.18]);
     map.setView(map.unproject(pt, z), z, {animate: true, duration: .5});
   }
 }

@@ -5,7 +5,7 @@ from playwright.async_api import async_playwright
 URL = "http://localhost:8000/index.html"
 OUT = "shots"
 START = {"latitude": 20.2506, "longitude": 105.9745}   # TP Ninh Bình
-DEST = "{lat: 20.2537, lng: 105.8946, name: 'Khu du lịch Tràng An'}"
+DEST = "{lat: 20.2557, lng: 105.9004, name: 'Bến thuyền Tràng An'}"
 
 async def main():
     os.makedirs(OUT, exist_ok=True)
