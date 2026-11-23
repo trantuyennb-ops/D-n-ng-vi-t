@@ -63,6 +63,29 @@ button{font:inherit;cursor:pointer;border:0}
 .pin{font-size:30px;line-height:30px;text-align:center}
 .pop button{display:block;width:100%;margin-top:6px;padding:8px;border-radius:8px;background:#e8f0fe;color:#1a73e8;font-weight:600}
 .pop b{display:block;max-width:220px}
+#lim{width:58px;height:58px;border-radius:50%;border:6px solid #e53935;background:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:22px;color:#000;flex:none}
+#spd.over{border-color:#e53935;background:#e53935;color:#fff}#spd.over small{color:#fff}
+#lanes{display:none;gap:4px;margin-top:8px;background:rgba(0,0,0,.25);border-radius:10px;padding:4px 6px;width:max-content;max-width:100%}
+#lanes span{font-size:26px;line-height:1;width:30px;text-align:center;opacity:.35}#lanes span.ok{opacity:1}
+#camBadge{margin-top:8px;background:#f9ab00;color:#000;font-weight:700;border-radius:10px;padding:6px 10px;font-size:15px;width:max-content}
+.cam{font-size:16px;line-height:24px;text-align:center;background:#fff;border:2px solid #f9ab00;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,.35)}
+.pop small{display:block;color:#5f6368;margin-top:4px}
+body.night .card{background:#202124;color:#e8eaed}
+body.night .row input{background:#303134;border-color:#5f6368;color:#e8eaed}
+body.night #modes button,body.night .btns button,body.night #alts button,body.night #swap,body.night #clr,body.night #fabs button{background:#303134;color:#e8eaed}
+body.night #modes button.on,body.night .btns .pri,body.night #fabs button.on{background:#8ab4f8;color:#202124}
+body.night #alts button.on{border-color:#8ab4f8;background:#394457}
+body.night #sum,body.night #nSub,body.night #alts span,body.night #steps small{color:#bdc1c6}
+body.night #sugg div{border-color:#3c4043}body.night #sugg div small{color:#bdc1c6}
+body.night #steps div{border-color:#3c4043}body.night #spd{border-color:#5f6368}
+/* Màn hình ngang (màn ô tô, máy tính bảng): bảng điều khiển dồn sang trái, bản đồ rộng bên phải */
+@media (orientation:landscape) and (min-width:700px){
+  #top,#banner{right:auto;width:400px}
+  #sheet,#navbar{right:auto;left:10px;bottom:10px;width:400px;border-radius:18px}
+  #sheet{max-height:calc(100vh - 190px)}
+  #fabs{bottom:20px}
+  #sugg{max-height:calc(100vh - 200px)}
+}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -83,9 +106,12 @@ button{font:inherit;cursor:pointer;border:0}
 <div id="banner" hidden>
   <div id="bMain"><div id="bIcon">↑</div><div><div id="bDist"></div><div id="bText"></div></div></div>
   <div id="bThen"></div>
+  <div id="lanes"></div>
+  <div id="camBadge" hidden></div>
 </div>
 
 <div id="fabs">
+  <button id="btnCam" title="Đánh dấu camera tại đây" hidden>📷</button>
   <button id="btnLayer" title="Lớp bản đồ">🛰</button>
   <button id="btnVoice" class="on" title="Giọng nói">🔊</button>
   <button id="btnLoc" title="Vị trí của tôi">◎</button>
@@ -104,6 +130,7 @@ button{font:inherit;cursor:pointer;border:0}
 
 <div id="navbar" class="card" hidden>
   <div id="spd"><span id="spdV">0</span><small>km/h</small></div>
+  <div id="lim" hidden><span id="limV"></span></div>
   <div id="nInfo"><div id="nTime"></div><div id="nSub"></div></div>
   <button id="btnExit">Thoát</button>
 </div>
@@ -227,9 +254,22 @@ baseStreet.addTo(map);
 let sat = false;
 $('btnLayer').onclick = () => {
   sat = !sat;
-  if (sat) { map.removeLayer(baseStreet); baseSat.addTo(map); $('btnLayer').textContent = '🗺'; }
-  else { map.removeLayer(baseSat); baseStreet.addTo(map); $('btnLayer').textContent = '🛰'; }
+  if (sat) { map.removeLayer(streetLayer()); baseSat.addTo(map); $('btnLayer').textContent = '🗺'; }
+  else { map.removeLayer(baseSat); streetLayer().addTo(map); $('btnLayer').textContent = '🛰'; }
 };
+// Bản đồ tối ban đêm (18h–6h) như Google Maps, đỡ chói mắt khi lái xe
+const baseNight = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {maxZoom: 21, maxNativeZoom: 20, subdomains: 'abcd', attribution: '© OpenStreetMap © CARTO'});
+let night = false;
+function isNight() { const h = new Date().getHours(); return h >= 18 || h < 6; }
+function streetLayer() { return night ? baseNight : baseStreet; }
+function applyNight() {
+  const n = isNight();
+  if (n === night) return;
+  const old = streetLayer(); night = n;
+  document.body.classList.toggle('night', n);
+  if (!sat) { map.removeLayer(old); streetLayer().addTo(map); }
+}
+applyNight(); setInterval(applyNight, 60000);
 
 const meIcon = L.divIcon({className: 'me', iconSize: [26,26], iconAnchor: [13,13],
   html: '<svg viewBox="0 0 26 26"><circle cx="13" cy="13" r="11" fill="#1a73e8" stroke="#fff" stroke-width="3"/><path d="M13 5 L18 17 L13 14.5 L8 17 Z" fill="#fff"/></svg>'});
@@ -386,11 +426,14 @@ function popHtml() {
     <button onclick="App.tapTo()">➜ Đi đến đây</button>
     <button onclick="App.tapFrom()">● Xuất phát từ đây</button>
     <button onclick="App.fav('home')">🏠 Lưu làm Nhà</button>
-    <button onclick="App.fav('work')">🏢 Lưu làm Cơ quan</button></div>`;
+    <button onclick="App.fav('work')">🏢 Lưu làm Cơ quan</button>
+    <button onclick="App.cam()">📷 Đánh dấu camera ở đây</button></div>`;
 }
 window.App = {
   tapTo() { map.closePopup(); const p = {lat: tapLL.lat, lng: tapLL.lng, name: tapName}; addRecent(p); setDest(p); },
   tapFrom() { map.closePopup(); S.origin = {lat: tapLL.lat, lng: tapLL.lng, name: tapName}; $('inFrom').value = tapName; if (S.dest) route(); else toast('Giờ hãy chọn điểm đến'); },
+  cam() { map.closePopup(); addCam(tapLL.lat, tapLL.lng); },
+  delCam(i) { map.closePopup(); const cs = userCams(); cs.splice(i, 1); store.set('cams', cs); drawCams(); matchCams(); toast('Đã xóa camera'); },
   fav(k) { map.closePopup(); const f = store.get('fav', {}); f[k] = {lat: tapLL.lat, lng: tapLL.lng, name: tapName}; store.set('fav', f); toast('Đã lưu ' + (k === 'home' ? 'Nhà' : 'Cơ quan')); }
 };
 
@@ -459,7 +502,9 @@ function prep(r) {
     idx = best;
     steps.push(Object.assign({}, st, {at: cum[best], text: instr(st), icon: arrow(st)}));
   }));
-  return {coords: c, cum, total: cum[cum.length-1], duration: r.duration, distance: r.distance, steps};
+  const ms = [];
+  r.legs.forEach(leg => ((leg.annotation && leg.annotation.maxspeed) || []).forEach(m => ms.push(m && m.speed ? Math.round(m.unit === 'mph' ? m.speed * 1.609 : m.speed) : null)));
+  return {coords: c, cum, total: cum[cum.length-1], duration: r.duration, distance: r.distance, steps, maxspeed: ms, cams: []};
 }
 
 function clearRoute() { S.layers.forEach(l => map.removeLayer(l)); S.layers = []; S.routes = []; }
@@ -469,7 +514,8 @@ async function fetchRoute(from, to) {
   let lastErr;
   for (const base of ROUTERS[S.profile]) {
     try {
-      const res = await fetch(base + q);
+      let res = await fetch(base + q + '&annotations=maxspeed');
+      if (!res.ok) res = await fetch(base + q);
       const j = await res.json();
       if (j.code === 'Ok' && j.routes.length) return j.routes;
       lastErr = new Error(j.message || j.code);
@@ -489,6 +535,7 @@ async function route(keepNav = false) {
     S.routes = rs.map(prep); S.sel = 0;
     if (S.origin) originMarker.setLatLng(from).addTo(map); else map.removeLayer(originMarker);
     drawRoutes(!keepNav);
+    if (keepNav) matchCams(); else loadCams();
     if (keepNav) { S.hintIdx = 0; S.spoken = {}; S.offCount = 0; }
     else showSheet();
   } catch (e) {
@@ -532,14 +579,84 @@ function showSheet() {
 }
 $('btnSteps').onclick = () => { const s = $('steps'); s.style.display = s.style.display === 'block' ? 'none' : 'block'; };
 
+/* ============ CAMERA GIAO THÔNG ============ */
+const camLayer = L.layerGroup().addTo(map);
+const camIcon = L.divIcon({className: 'cam', html: '📷', iconSize: [26, 26], iconAnchor: [13, 13]});
+S.osmCams = []; S.spokenCam = {};
+function userCams() { return store.get('cams', []); }
+function allCams() { return S.osmCams.concat(userCams().map((c, i) => Object.assign({user: i}, c))); }
+function drawCams() {
+  camLayer.clearLayers();
+  allCams().forEach(c => {
+    const m = L.marker([c.lat, c.lng], {icon: camIcon});
+    m.bindPopup(c.user !== undefined
+      ? `<div class="pop"><b>📷 Camera bạn đánh dấu</b><button onclick="App.delCam(${c.user})">Xóa camera này</button></div>`
+      : '<div class="pop"><b>📷 Camera giao thông</b><small>Nguồn: OpenStreetMap</small></div>');
+    camLayer.addLayer(m);
+  });
+}
+function projFull(p, r) {
+  const c = r.coords, kx = Math.cos(toRad(p[0])) * 111320, ky = 110540;
+  let best = {d: Infinity, along: 0};
+  for (let i = 0; i < c.length - 1; i++) {
+    const ax = (c[i][1] - p[1]) * kx, ay = (c[i][0] - p[0]) * ky;
+    const bx = (c[i+1][1] - p[1]) * kx, by = (c[i+1][0] - p[0]) * ky;
+    const dx = bx - ax, dy = by - ay, L2 = dx*dx + dy*dy;
+    let t = L2 ? -(ax*dx + ay*dy) / L2 : 0; t = Math.max(0, Math.min(1, t));
+    const x = ax + t*dx, y = ay + t*dy, d = Math.sqrt(x*x + y*y);
+    if (d < best.d) best = {d, along: r.cum[i] + t * (r.cum[i+1] - r.cum[i])};
+  }
+  return best;
+}
+function matchCams() {
+  const cs = allCams();
+  S.routes.forEach(r => {
+    r.cams = [];
+    cs.forEach(c => { const p = projFull([c.lat, c.lng], r); if (p.d < 35) r.cams.push({lat: c.lat, lng: c.lng, along: p.along}); });
+    r.cams.sort((a, b) => a.along - b.along);
+  });
+}
+async function loadCams() {
+  matchCams(); drawCams();
+  if (!S.routes.length) return;
+  const b = L.latLngBounds(S.routes[0].coords);
+  S.routes.forEach(r => b.extend(L.latLngBounds(r.coords)));
+  if (b.getNorthEast().distanceTo(b.getSouthWest()) > 300000) return; // tuyến quá dài thì bỏ qua để tránh tải nặng
+  const p = b.pad(0.05), bb = `${p.getSouth()},${p.getWest()},${p.getNorth()},${p.getEast()}`;
+  const q = `[out:json][timeout:20];(node["highway"="speed_camera"](${bb});node["enforcement"](${bb}););out body;relation["type"="enforcement"](${bb});node(r:"device");out body;`;
+  try {
+    const res = await fetch('https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(q));
+    const j = await res.json();
+    const seen = {};
+    S.osmCams = (j.elements || []).filter(e => e.type === 'node' && e.lat && !seen[e.id] && (seen[e.id] = 1)).map(e => ({lat: e.lat, lng: e.lon}));
+    matchCams(); drawCams();
+  } catch (e) {}
+}
+function addCam(lat, lng) {
+  const cs = userCams(); cs.push({lat, lng}); store.set('cams', cs);
+  drawCams(); matchCams(); toast('📷 Đã đánh dấu camera');
+}
+$('btnCam').onclick = () => { if (S.me) addCam(S.me[0], S.me[1]); };
+function beep() {
+  try {
+    const A = window.AudioContext || window.webkitAudioContext; if (!A) return;
+    const ctx = new A(), o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.value = 880; o.connect(g); g.connect(ctx.destination);
+    g.gain.setValueAtTime(.25, ctx.currentTime); g.gain.exponentialRampToValueAtTime(.001, ctx.currentTime + .5);
+    o.start(); o.stop(ctx.currentTime + .5);
+  } catch (e) {}
+}
+const LANE = {'uturn': '↶', 'sharp left': '↰', 'left': '↰', 'slight left': '↖', 'straight': '↑', 'slight right': '↗', 'right': '↱', 'sharp right': '↱', 'none': '↑'};
+function laneArrow(ind) { return LANE[(ind && ind[0]) || 'none'] || '↑'; }
+
 /* ============ DẪN ĐƯỜNG ============ */
 function stopSpeak() { if (window.Android) Android.stopSpeak(); else if ('speechSynthesis' in window) speechSynthesis.cancel(); }
-function say(t) {
+function say(t, add) {
   if (!S.voice) return;
-  if (window.Android) { Android.speak(t); return; }
+  if (window.Android) { if (add) Android.speakAdd(t); else Android.speak(t); return; }
   if (!('speechSynthesis' in window)) return;
   try {
-    speechSynthesis.cancel();
+    if (!add) speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(t);
     u.lang = 'vi-VN'; u.rate = 1;
     const v = speechSynthesis.getVoices().find(v => v.lang && v.lang.toLowerCase().startsWith('vi'));
@@ -573,7 +690,8 @@ function startNav(sim) {
   beginNav(sim);
 }
 function beginNav(sim) {
-  S.nav = true; S.follow = true; S.hintIdx = 0; S.spoken = {}; S.offCount = 0;
+  S.nav = true; S.follow = true; S.hintIdx = 0; S.spoken = {}; S.offCount = 0; S.spokenCam = {}; S.lastLim = undefined;
+  $('btnCam').hidden = false;
   $('top').hidden = true; $('sheet').hidden = true; $('banner').hidden = false; $('navbar').hidden = false;
   $('btnLoc').classList.add('on');
   map.closePopup(); drawRoutes(false);
@@ -585,7 +703,7 @@ function beginNav(sim) {
 }
 function stopNav(msg) {
   S.nav = false; stopSim();
-  $('top').hidden = false; $('banner').hidden = true; $('navbar').hidden = true;
+  $('top').hidden = false; $('banner').hidden = true; $('navbar').hidden = true; $('btnCam').hidden = true; $('camBadge').hidden = true;
   if (window.Android) Android.keepScreen(false);
   try { S.wake && S.wake.release(); } catch (e) {} S.wake = null;
   if (msg) toast(msg, 4000);
@@ -649,7 +767,34 @@ function navUpdate() {
   $('nSub').textContent = `${fmtDist(remain)} · Đến lúc ${fmtClock(new Date(Date.now() + remainT * 1000))}`;
   const kmh = Math.round((S.speed || 0) * 3.6);
   $('spdV').textContent = kmh;
-  $('spd').style.borderColor = kmh > (S.profile === 'car' ? 60 : 25) ? '#ea4335' : '#dadce0';
+
+  // Biển giới hạn tốc độ + cảnh báo quá tốc độ
+  const lim = r.maxspeed[pr.i] || null;
+  $('lim').hidden = !lim; if (lim) $('limV').textContent = lim;
+  const over = !!lim && kmh > lim + 2;
+  $('spd').classList.toggle('over', over);
+  let limMsg = '';
+  if (lim && S.lastLim !== undefined && lim !== S.lastLim && (!S.lastLim || lim < S.lastLim)) limMsg = `Tốc độ tối đa ${lim} ki lô mét một giờ`;
+  S.lastLim = lim;
+  if (over && Date.now() - (S.lastOver || 0) > 30000) { S.lastOver = Date.now(); beep(); limMsg = `Bạn đang chạy quá tốc độ. Tối đa ${lim} ki lô mét một giờ`; }
+
+  // Chỉ dẫn làn đường
+  const ln = next.intersections && next.intersections[0] && next.intersections[0].lanes;
+  if (ln && ln.length > 1 && dNext < 600) {
+    $('lanes').style.display = 'flex';
+    $('lanes').innerHTML = ln.map(l => `<span class="${l.valid ? 'ok' : ''}">${laneArrow(l.indications)}</span>`).join('');
+  } else $('lanes').style.display = 'none';
+
+  // Camera phía trước
+  let camMsg = '';
+  const look = (S.speed || 0) > 11 ? 800 : 500;
+  const cam = r.cams.find(c => c.along - pr.along > -15);
+  if (cam && cam.along - pr.along <= look) {
+    const ahead = Math.max(0, cam.along - pr.along);
+    $('camBadge').hidden = false; $('camBadge').textContent = '📷 Camera phía trước · ' + fmtDist(ahead);
+    const key = cam.lat.toFixed(5) + ',' + cam.lng.toFixed(5);
+    if (!S.spokenCam[key] && ahead > 40) { S.spokenCam[key] = 1; beep(); camMsg = `Phía trước ${speakDist(ahead)} có camera giao thông` + (lim ? `, tốc độ tối đa ${lim} ki lô mét một giờ` : ''); }
+  } else $('camBadge').hidden = true;
 
   // Giọng nói
   const n = r.steps.indexOf(next), sp = S.spoken[n] || (S.spoken[n] = {});
@@ -665,10 +810,12 @@ function navUpdate() {
     else if (dNext <= near && dNext > now && !sp.near) { sp.near = 1; sp.far = 1; say(`Sau ${speakDist(dNext)}, ${next.text}${after && after.at - next.at < 150 ? '. Sau đó ' + after.text : ''}`); }
     else if (dNext <= now && !sp.now) { sp.now = sp.near = sp.far = 1; say(next.text); }
   }
+  if (camMsg) say(camMsg, true);
+  if (limMsg) say(limMsg, true);
 
   // Bám theo người dùng
   if (S.follow) {
-    const z = fast ? 16 : 17;
+    const z = dNext < 200 ? 18 : ((S.speed || 0) > 15 ? 15 : fast ? 16 : 17);
     const size = map.getSize();
     const pt = map.project(S.me, z).subtract([0, size.y * 0.18]);
     map.setView(map.unproject(pt, z), z, {animate: true, duration: .5});

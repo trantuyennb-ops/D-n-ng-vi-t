@@ -103,6 +103,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     inner class Bridge {
         @JavascriptInterface fun startLocation() { main.post { requestLocation() } }
         @JavascriptInterface fun speak(text: String) { main.post { say(text) } }
+        @JavascriptInterface fun speakAdd(text: String) { main.post { if (ttsReady) tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "nav2") } }
         @JavascriptInterface fun stopSpeak() { main.post { tts?.stop() } }
         @JavascriptInterface fun keepScreen(on: Boolean) {
             main.post {
