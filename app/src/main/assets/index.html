@@ -173,11 +173,49 @@ const baseStreet = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
 // Vệ tinh nét cao: ảnh Esri Clarity (ít nén, sắc nét hơn), tải ảnh độ phân giải cao cho màn hình điện thoại (retina),
 // phóng to tới mức 21; dự phòng sang Esri World Imagery nếu ô ảnh Clarity lỗi.
 const isHiDPI = (window.devicePixelRatio || 1) > 1.4;
-// Esri chỉ có ảnh tới mức 18 ở nhiều nơi (mức 19 trả về ô xám) -> giới hạn ảnh tải về ở mức 18, phóng to hơn thì kéo giãn
-const SAT_NATIVE = isHiDPI ? 17 : 18; // màn hình nét cao tự cộng thêm 1 mức
+// Esri có độ phủ khác nhau từng nơi: chỗ thiếu ảnh nó trả về ô xám "Map data not yet available".
+// Lớp này tự nhận ra ô xám đó và thay bằng ảnh nét nhất có ở mức thấp hơn (phóng to phần tương ứng).
+const SAT_NATIVE = isHiDPI ? 18 : 19; // màn hình nét cao tự cộng thêm 1 mức
 const SAT_OPT = {maxZoom: 21, maxNativeZoom: SAT_NATIVE, detectRetina: isHiDPI, keepBuffer: 4, updateWhenZooming: false, attribution: '© Esri, Maxar, Earthstar Geographics'};
-const satClarity = L.tileLayer('https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', SAT_OPT);
-satClarity.on('tileerror', ev => { ev.tile.onerror = null; ev.tile.src = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/' + ev.coords.z + '/' + ev.coords.y + '/' + ev.coords.x; });
+const SAT_URLS = ['https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/',
+                  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/'];
+const _probe = document.createElement('canvas'); _probe.width = _probe.height = 16;
+function isNoDataTile(img) {
+  try {
+    const g = _probe.getContext('2d');
+    g.drawImage(img, 0, 0, 16, 16);
+    const d = g.getImageData(0, 0, 16, 16).data;
+    let grey = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      const r = d[i], gg = d[i+1], b = d[i+2];
+      if (Math.abs(r - gg) < 8 && Math.abs(gg - b) < 8 && r > 185 && r < 240) grey++;
+    }
+    return grey > 256 * 0.85;
+  } catch (e) { return false; }
+}
+const SmartSat = L.TileLayer.extend({
+  createTile(coords, done) {
+    const size = this.getTileSize().x;
+    const box = document.createElement('div');
+    box.style.overflow = 'hidden';
+    const z0 = this._getZoomForUrl();
+    const load = (depth, src) => {
+      const s = 1 << depth, z = z0 - depth, x = coords.x >> depth, y = coords.y >> depth;
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        if (depth < 4 && z > 3 && isNoDataTile(img)) { load(depth + 1, src); return; }
+        img.style.cssText = `position:absolute;width:${size*s}px;height:${size*s}px;left:${-(coords.x % s)*size}px;top:${-(coords.y % s)*size}px`;
+        box.appendChild(img); done(null, box);
+      };
+      img.onerror = () => { if (src + 1 < SAT_URLS.length) load(depth, src + 1); else done(new Error('tile'), box); };
+      img.src = SAT_URLS[src] + z + '/' + y + '/' + x;
+    };
+    load(0, 0);
+    return box;
+  }
+});
+const satClarity = new SmartSat('', SAT_OPT);
 map.createPane('labels'); map.getPane('labels').style.zIndex = 350; map.getPane('labels').style.pointerEvents = 'none';
 const REF_OPT = {maxZoom: 21, maxNativeZoom: SAT_NATIVE, detectRetina: isHiDPI, pane: 'labels'};
 const baseSat = L.layerGroup([
