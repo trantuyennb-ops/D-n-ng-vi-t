@@ -1,0 +1,34 @@
+name: Screenshots
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths: [ "tools/screens.py", ".github/workflows/screenshots.yml" ]
+
+permissions:
+  contents: write
+
+jobs:
+  shots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tải Leaflet
+        run: |
+          D=app/src/main/assets/leaflet; mkdir -p $D/images; B=https://unpkg.com/leaflet@1.9.4/dist
+          curl -fsSL $B/leaflet.js -o $D/leaflet.js; curl -fsSL $B/leaflet.css -o $D/leaflet.css
+          for f in layers.png layers-2x.png marker-icon.png marker-icon-2x.png marker-shadow.png; do curl -fsSL $B/images/$f -o $D/images/$f; done
+      - name: Cài Playwright
+        run: pip install playwright && python -m playwright install --with-deps chromium
+      - name: Chụp màn hình
+        run: |
+          (cd app/src/main/assets && python -m http.server 8000 &) ; sleep 2
+          python tools/screens.py
+          ls -la shots
+      - name: Đăng ảnh lên release "screenshots"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete screenshots --yes --cleanup-tag || true
+          gh release create screenshots shots/*.png --title "Ảnh màn hình app" --notes "Ảnh chụp tự động" --prerelease
