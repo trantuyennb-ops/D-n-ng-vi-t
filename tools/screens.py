@@ -41,7 +41,8 @@ async def main():
         await pg.click("#btnLayer"); await shot("6_dan_duong_ve_tinh", 8)
 
         await pg.click("#btnExit")
-        await pg.evaluate("map.setView([20.2537, 105.8946], 18)")
+        await pg.wait_for_timeout(2500)
+        await pg.evaluate("document.getElementById('sheet').hidden = true; map.setView([20.2537, 105.8946], 18, {animate: false})")
         await shot("7_ve_tinh_net", 8)
         await b.close()
 
