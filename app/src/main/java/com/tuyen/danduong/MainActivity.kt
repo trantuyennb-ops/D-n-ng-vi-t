@@ -9,6 +9,7 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -115,11 +116,12 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     /* ---------- Vị trí ---------- */
     private fun hasLocPerm() =
+        Build.VERSION.SDK_INT < 23 ||
         checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
     private fun requestLocation() {
         wantLocation = true
-        if (!hasLocPerm()) {
+        if (!hasLocPerm() && Build.VERSION.SDK_INT >= 23) {
             requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION), 1)
             return
         }

@@ -12,7 +12,7 @@ android {
 
     defaultConfig {
         applicationId = "com.tuyen.danduong"
-        minSdk = 26          // Android 8.0 trở lên
+        minSdk = 21          // Android 5.0 trở lên (nhiều màn ô tô ghi Android 10 nhưng lõi thật cũ hơn)
         targetSdk = 34
         versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
         versionName = "1.0." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0")
