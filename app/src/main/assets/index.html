@@ -248,7 +248,16 @@ const store = {
 
 /* ============ BẢN ĐỒ ============ */
 const map = L.map('map', {zoomControl: false, attributionControl: true}).setView([20.25, 105.97], 13);
-const baseStreet = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 21, maxNativeZoom: 19, attribution: '© OpenStreetMap'});
+const SLOW_DEV = (() => { const m = navigator.userAgent.match(/Chrome\/(\d+)/); return !!m && +m[1] < 70; })();
+// updateWhenIdle:false: tải ảnh ngay cả khi bản đồ đang trượt theo xe (mặc định chỉ tải khi đứng yên -> rất chậm lúc dẫn đường)
+const baseStreet = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 21, maxNativeZoom: 19, updateWhenIdle: false, keepBuffer: SLOW_DEV ? 3 : 4, attribution: '© OpenStreetMap, Esri'});
+// Ô ảnh OSM lỗi/chậm -> lấy từ máy chủ dự phòng Esri (cùng cách đánh số ô)
+baseStreet.on('tileerror', ev => {
+  const t = ev.tile, c = ev.coords;
+  if (t.dataset.fb) return;
+  t.dataset.fb = '1';
+  t.src = `https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/${c.z}/${c.y}/${c.x}`;
+});
 // Vệ tinh nét cao: ảnh Esri Clarity (ít nén, sắc nét hơn), tải ảnh độ phân giải cao cho màn hình điện thoại (retina),
 // phóng to tới mức 21; dự phòng sang Esri World Imagery nếu ô ảnh Clarity lỗi.
 // Máy cũ/yếu (WebView dưới Chrome 70, ví dụ màn ô tô Android 6): tải ít ô ảnh hơn cho nhanh
@@ -257,7 +266,7 @@ const isHiDPI = !OLD_WV && (window.devicePixelRatio || 1) > 1.4;
 // Esri có độ phủ khác nhau từng nơi: chỗ thiếu ảnh nó trả về ô xám "Map data not yet available".
 // Lớp này tự nhận ra ô xám đó và thay bằng ảnh nét nhất có ở mức thấp hơn (phóng to phần tương ứng).
 const SAT_NATIVE = isHiDPI ? 18 : 19; // màn hình nét cao tự cộng thêm 1 mức
-const SAT_OPT = {maxZoom: 21, maxNativeZoom: SAT_NATIVE, detectRetina: isHiDPI, keepBuffer: OLD_WV ? 1 : 4, updateWhenZooming: false, attribution: '© Esri, Maxar, Earthstar Geographics'};
+const SAT_OPT = {maxZoom: 21, maxNativeZoom: SAT_NATIVE, detectRetina: isHiDPI, keepBuffer: OLD_WV ? 2 : 4, updateWhenIdle: false, updateWhenZooming: false, attribution: '© Esri, Maxar, Earthstar Geographics'};
 const SAT_URLS = ['https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/',
                   'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/'];
 const _probe = document.createElement('canvas'); _probe.width = _probe.height = 16;
@@ -632,6 +641,33 @@ function rankRoutes() {
     R[iEasy].tags.push('Dễ đi nhất');
   }
 }
+// Tải trước ảnh bản đồ dọc tuyến (mức 15–17, kèm các ô bên cạnh), tối đa ~600 ô, 4 ô cùng lúc
+let prefetchJob = 0;
+function prefetchRoute(r) {
+  if (!r) return;
+  const job = ++prefetchJob, urls = [], seen = {};
+  const tileOf = (lat, lng, z) => { const n = 1 << z, x = Math.floor((lng + 180) / 360 * n), la = lat * Math.PI / 180, y = Math.floor((1 - Math.log(Math.tan(la) + 1 / Math.cos(la)) / Math.PI) / 2 * n); return [x, y]; };
+  const zs = SLOW_DEV ? [16, 17] : [15, 16, 17];
+  for (let i = 0; i < r.coords.length; i++) {
+    if (i > 0 && r.cum[i] - (r._lastPf || 0) < 120 && i < r.coords.length - 1) continue;
+    r._lastPf = r.cum[i];
+    zs.forEach(z => {
+      const [x, y] = tileOf(r.coords[i][0], r.coords[i][1], z);
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+        const k = z + '/' + (x + dx) + '/' + (y + dy);
+        if (!seen[k]) { seen[k] = 1; urls.push(sat ? `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y + dy}/${x + dx}` : `https://tile.openstreetmap.org/${k}.png`); }
+      }
+    });
+  }
+  r._lastPf = 0;
+  const list = urls.slice(0, 600);
+  let idx = 0;
+  const next = () => {
+    if (job !== prefetchJob || idx >= list.length) return;
+    const img = new Image(); img.onload = img.onerror = () => setTimeout(next, 30); img.src = list[idx++];
+  };
+  for (let k = 0; k < 4; k++) setTimeout(next, 1500 + k * 100); // đợi bản đồ hiện xong mới tải trước
+}
 function clearRoute() { S.layers.forEach(l => map.removeLayer(l)); S.layers = []; S.routes = []; }
 
 async function fetchRoute(from, to) {
@@ -661,6 +697,7 @@ async function route(keepNav = false) {
     if (S.origin) originMarker.setLatLng(from).addTo(map); else map.removeLayer(originMarker);
     drawRoutes(!keepNav);
     if (keepNav) matchCams(); else loadCams();
+    prefetchRoute(S.routes[S.sel]);
     if (keepNav) { S.hintIdx = 0; S.spoken = {}; S.offCount = 0; if (S.nav) { toast('✅ Đã có đường mới'); say('Đã tìm được đường mới. ' + fmtDur(S.routes[S.sel].duration) + ' nữa đến nơi.', true); } }
     else showSheet();
   } catch (e) {
@@ -1140,12 +1177,16 @@ function navUpdate() {
 
   // Bám theo người dùng
   if (S.follow) {
-    const z = dNext < 200 ? 18 : ((S.speed || 0) > 15 ? 15 : fast ? 16 : 17);
-    if (S.headUp) { applyRot(true); map.setView(S.me, z, {animate: true, duration: .5}); return; }
+    const want = dNext < 200 && !SLOW_DEV ? 18 : ((S.speed || 0) > 15 ? 15 : fast ? 16 : 17);
+    if (S.zoomNow == null) S.zoomNow = want;
+    if (want !== S.zoomNow) { S.zoomCand === want ? S.zoomCandN++ : (S.zoomCand = want, S.zoomCandN = 1); if (S.zoomCandN >= 4) { S.zoomNow = want; S.zoomCand = null; } }
+    else S.zoomCand = null;
+    const z = S.zoomNow, anim = {animate: true, duration: SLOW_DEV ? .3 : .5};
+    if (S.headUp) { applyRot(true); map.setView(S.me, z, anim); return; }
     applyRot(false);
     const size = map.getSize();
     const pt = map.project(S.me, z).subtract(isLand() ? [210, size.y * 0.15] : [0, size.y * 0.18]);
-    map.setView(map.unproject(pt, z), z, {animate: true, duration: .5});
+    map.setView(map.unproject(pt, z), z, anim);
   }
 }
 
