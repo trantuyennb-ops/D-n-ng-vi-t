@@ -90,7 +90,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     }
     private val ownTlsHosts = setOf(
         "nominatim.openstreetmap.org", "routing.openstreetmap.de", "router.project-osrm.org",
-        "overpass-api.de", "photon.komoot.io")
+        "overpass-api.de", "overpass.kumi.systems", "overpass.private.coffee", "photon.komoot.io")
     private val skipHeaders = setOf("accept-encoding", "if-none-match", "if-modified-since", "range", "origin")
 
     private fun nativeFetch(req: WebResourceRequest): WebResourceResponse? {

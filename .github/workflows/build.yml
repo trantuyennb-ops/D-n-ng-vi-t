@@ -25,6 +25,15 @@ jobs:
           done
           ls -la app/src/main/assets/leaflet
 
+      - name: Tải dữ liệu camera giao thông Việt Nam (OpenStreetMap)
+        continue-on-error: true
+        run: |
+          Q='[out:json][timeout:170];area["ISO3166-1"="VN"][admin_level=2]->.vn;(node["highway"="speed_camera"](area.vn);node["enforcement"](area.vn);node["man_made"="surveillance"]["surveillance:type"~"camera|ALPR"]["surveillance"="traffic"](area.vn););out body;relation["type"="enforcement"](area.vn);node(r:"device");out body;'
+          for u in https://overpass-api.de/api/interpreter https://overpass.kumi.systems/api/interpreter https://overpass.private.coffee/api/interpreter; do
+            if curl -fsS --max-time 200 --data-urlencode "data=$Q" "$u" -o /tmp/cams.json && python3 -c "import json;json.load(open('/tmp/cams.json'))"; then echo "OK $u"; break; fi
+          done
+          python3 tools/cams.py
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

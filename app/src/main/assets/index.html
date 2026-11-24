@@ -658,19 +658,29 @@ function applyRot(on) {
 /* ============ CAMERA GIAO THÔNG ============ */
 const camLayer = L.layerGroup().addTo(map);
 const camIcon = L.divIcon({className: 'cam', html: '📷', iconSize: [26, 26], iconAnchor: [13, 13]});
-S.osmCams = []; S.spokenCam = {};
+S.osmCams = []; S.baseCams = []; S.spokenCam = {};
+// Danh sách camera giao thông Việt Nam đóng sẵn trong app (tải từ OpenStreetMap mỗi lần build)
+fetch('cams_vn.json').then(r => r.json()).then(d => { if (Array.isArray(d)) { S.baseCams = d; matchCams(); drawCams(); } }).catch(() => {});
 function userCams() { return store.get('cams', []); }
-function allCams() { return S.osmCams.concat(userCams().map((c, i) => Object.assign({user: i}, c))); }
+function allCams() {
+  const seen = {}, out = [];
+  S.baseCams.concat(S.osmCams).forEach(c => { const k = c.lat.toFixed(4) + ',' + c.lng.toFixed(4); if (!seen[k]) { seen[k] = 1; out.push(c); } });
+  return out.concat(userCams().map((c, i) => Object.assign({user: i}, c)));
+}
+function camLabel(c) { return c.k === 'speed' ? 'Camera bắn tốc độ' : 'Camera giao thông'; }
+// Chỉ vẽ camera trong vùng đang xem (tối đa 300) để máy yếu không bị chậm
 function drawCams() {
   camLayer.clearLayers();
-  allCams().forEach(c => {
+  const b = map.getBounds().pad(0.3);
+  allCams().filter(c => c.user !== undefined || b.contains([c.lat, c.lng])).slice(0, 300).forEach(c => {
     const m = L.marker([c.lat, c.lng], {icon: camIcon});
     m.bindPopup(c.user !== undefined
       ? `<div class="pop"><b>📷 Camera bạn đánh dấu</b><button onclick="App.delCam(${c.user})">Xóa camera này</button></div>`
-      : '<div class="pop"><b>📷 Camera giao thông</b><small>Nguồn: OpenStreetMap</small></div>');
+      : `<div class="pop"><b>📷 ${camLabel(c)}</b>${c.s ? '<small>Tốc độ tối đa: ' + esc(c.s) + ' km/h</small>' : ''}<small>Nguồn: OpenStreetMap</small></div>`);
     camLayer.addLayer(m);
   });
 }
+let camDrawT; map.on('moveend', () => { clearTimeout(camDrawT); camDrawT = setTimeout(drawCams, 400); });
 function projFull(p, r) {
   const c = r.coords, kx = Math.cos(toRad(p[0])) * 111320, ky = 110540;
   let best = {d: Infinity, along: 0};
@@ -688,10 +698,16 @@ function matchCams() {
   const cs = allCams();
   S.routes.forEach(r => {
     r.cams = [];
-    cs.forEach(c => { const p = projFull([c.lat, c.lng], r); if (p.d < 35) r.cams.push({lat: c.lat, lng: c.lng, along: p.along}); });
+    const bb = L.latLngBounds(r.coords).pad(0.02);
+    cs.forEach(c => {
+      if (!bb.contains([c.lat, c.lng])) return; // lọc nhanh camera ngoài vùng tuyến đường
+      const p = projFull([c.lat, c.lng], r);
+      if (p.d < 35) r.cams.push({lat: c.lat, lng: c.lng, along: p.along, k: c.k, s: c.s});
+    });
     r.cams.sort((a, b) => a.along - b.along);
   });
 }
+const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter', 'https://overpass.private.coffee/api/interpreter'];
 async function loadCams() {
   matchCams(); drawCams();
   if (!S.routes.length) return;
@@ -700,13 +716,19 @@ async function loadCams() {
   if (b.getNorthEast().distanceTo(b.getSouthWest()) > 300000) return; // tuyến quá dài thì bỏ qua để tránh tải nặng
   const p = b.pad(0.05), bb = `${p.getSouth()},${p.getWest()},${p.getNorth()},${p.getEast()}`;
   const q = `[out:json][timeout:20];(node["highway"="speed_camera"](${bb});node["enforcement"](${bb}););out body;relation["type"="enforcement"](${bb});node(r:"device");out body;`;
-  try {
-    const res = await fetch('https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(q));
-    const j = await res.json();
-    const seen = {};
-    S.osmCams = (j.elements || []).filter(e => e.type === 'node' && e.lat && !seen[e.id] && (seen[e.id] = 1)).map(e => ({lat: e.lat, lng: e.lon}));
-    matchCams(); drawCams();
-  } catch (e) {}
+  // Thử lần lượt nhiều máy chủ Overpass, máy chủ nào quá tải (502...) thì chuyển máy khác
+  for (const host of OVERPASS) {
+    try {
+      const res = await fetchT(host + '?data=' + encodeURIComponent(q), 25000);
+      if (!res.ok) continue;
+      const j = await res.json();
+      const seen = {};
+      S.osmCams = (j.elements || []).filter(e => e.type === 'node' && e.lat && !seen[e.id] && (seen[e.id] = 1))
+        .map(e => { const t = e.tags || {}; return {lat: e.lat, lng: e.lon, k: t.highway === 'speed_camera' || t.maxspeed ? 'speed' : 'traffic', s: t.maxspeed || ''}; });
+      matchCams(); drawCams();
+      return;
+    } catch (e) {}
+  }
 }
 function addCam(lat, lng) {
   const cs = userCams(); cs.push({lat, lng}); store.set('cams', cs);
@@ -868,9 +890,9 @@ function navUpdate() {
   const cam = r.cams.find(c => c.along - pr.along > -15);
   if (cam && cam.along - pr.along <= look) {
     const ahead = Math.max(0, cam.along - pr.along);
-    $('camBadge').hidden = false; $('camBadge').textContent = '📷 Camera phía trước · ' + fmtDist(ahead);
+    $('camBadge').hidden = false; $('camBadge').textContent = '📷 ' + camLabel(cam) + ' · ' + fmtDist(ahead) + (cam.s ? ' · tối đa ' + cam.s : '');
     const key = cam.lat.toFixed(5) + ',' + cam.lng.toFixed(5);
-    if (!S.spokenCam[key] && ahead > 40) { S.spokenCam[key] = 1; beep(); camMsg = `Phía trước ${speakDist(ahead)} có camera giao thông` + (lim ? `, tốc độ tối đa ${lim} ki lô mét một giờ` : ''); }
+    if (!S.spokenCam[key] && ahead > 40) { S.spokenCam[key] = 1; beep(); const cl = cam.k === 'speed' ? 'camera bắn tốc độ' : 'camera giao thông', cs = parseInt(cam.s) || lim; camMsg = `Phía trước ${speakDist(ahead)} có ${cl}` + (cs ? `, tốc độ tối đa ${cs} ki lô mét một giờ` : ''); }
   } else $('camBadge').hidden = true;
 
   // Giọng nói
@@ -943,6 +965,7 @@ async function runDiag() {
   $('diag').hidden = false; diagLines = [];
   const m = navigator.userAgent.match(/Chrome\/([\d.]+)/);
   diagAdd('Trình duyệt nội bộ (WebView): ' + (m ? 'Chrome ' + m[1] : navigator.userAgent));
+  diagAdd(`Camera: ${S.baseCams.length} đóng sẵn + ${S.osmCams.length} tải theo tuyến + ${userCams().length} bạn đánh dấu`);
   diagAdd('Vị trí: ' + (S.me ? `✅ ${S.me[0].toFixed(5)}, ${S.me[1].toFixed(5)} (sai số ${Math.round(S.acc)} m)` : '❌ chưa có tín hiệu GPS'));
   diagAdd('\n— Kết nối từ giao diện app —');
   for (const [name, url] of DIAG_URLS) {

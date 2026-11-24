@@ -5,3 +5,4 @@ local.properties
 .idea/
 *.iml
 app/src/main/assets/leaflet/
+app/src/main/assets/cams_vn.json
