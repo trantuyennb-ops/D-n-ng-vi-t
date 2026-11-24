@@ -41,6 +41,7 @@ import javax.net.ssl.SSLSocketFactory
 import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
 import java.util.concurrent.TimeUnit
+import okhttp3.Cache
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
@@ -83,6 +84,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 .sslSocketFactory(t.first, t.second)
                 .connectTimeout(15, TimeUnit.SECONDS).readTimeout(25, TimeUnit.SECONDS)
                 .followRedirects(true).followSslRedirects(true)
+                .cache(Cache(java.io.File(cacheDir, "http"), 100L * 1024 * 1024)) // lưu ảnh bản đồ đã tải
                 .build()
         } catch (e: Throwable) { null }
     }
