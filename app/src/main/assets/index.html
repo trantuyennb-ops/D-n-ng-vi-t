@@ -1088,8 +1088,13 @@ function navUpdate() {
     if (dNext <= far && dNext > near && !sp.far) { sp.far = 1; say(`Sau ${speakDist(dNext)}, bạn sẽ đến nơi`); }
     if (remain < (S.profile === 'foot' ? 15 : 25)) { say(next.text); stopNav('🏁 Bạn đã đến nơi!'); return; }
   } else {
-    if (dNext <= far && dNext > near * 1.5 && !sp.far) { sp.far = 1; say(`Sau ${speakDist(dNext)}, ${next.text}`); }
-    else if (dNext <= near && dNext > now && !sp.near) { sp.near = 1; sp.far = 1; say(`Sau ${speakDist(dNext)}, ${next.text}${after && after.at - next.at < 150 ? '. Sau đó ' + after.text : ''}`); }
+    // Bước chỉ đổi tên đường / đi thẳng tiếp: không cần đọc (giống Google Maps)
+    const quiet = ['new name', 'notification'].indexOf(next.maneuver.type) >= 0 || (next.maneuver.type === 'continue' && (next.maneuver.modifier || 'straight') === 'straight');
+    const low = t => t.charAt(0).toLowerCase() + t.slice(1);
+    const thenTxt = after && after.at - next.at < 150 && ['new name', 'notification'].indexOf(after.maneuver.type) < 0 ? '. Sau đó ' + low(after.text) : '';
+    if (quiet) { /* chỉ hiện trên màn hình */ }
+    else if (dNext <= far && dNext > near * 1.5 && !sp.far) { sp.far = 1; say(`Sau ${speakDist(dNext)}, ${low(next.text)}`); }
+    else if (dNext <= near && dNext > now && !sp.near) { sp.near = 1; sp.far = 1; say(`Sau ${speakDist(dNext)}, ${low(next.text)}${thenTxt}`); }
     else if (dNext <= now && !sp.now) { sp.now = sp.near = sp.far = 1; say(next.text); }
   }
   if (camMsg) say(camMsg, true);
