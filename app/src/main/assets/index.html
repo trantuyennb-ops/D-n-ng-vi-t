@@ -641,8 +641,10 @@ function applyRot(on) {
     }
     return;
   }
-  const W = innerWidth, H = innerHeight, D = Math.ceil(Math.sqrt(W * W + H * H));
+  const W = innerWidth, H = innerHeight;
   const cx = isLand() ? 210 + W / 2 : W / 2, cy = H * 0.66;
+  // Khung phải đủ lớn để phủ góc màn hình xa nhất khi xoay quanh vị trí xe
+  const dx = Math.max(cx, W - cx), dy = Math.max(cy, H - cy), D = Math.ceil(2 * Math.sqrt(dx * dx + dy * dy)) + 4;
   if (!S.rotOn || S.rotD !== D) {
     S.rotOn = true; S.rotD = D;
     Object.assign(el.style, {width: D + 'px', height: D + 'px', left: (cx - D / 2) + 'px', top: (cy - D / 2) + 'px', right: 'auto', bottom: 'auto', transition: 'transform .8s linear'});
