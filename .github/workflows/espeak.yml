@@ -1,0 +1,29 @@
+name: Giong noi eSpeak NG
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths: [ ".github/workflows/espeak.yml" ]
+
+permissions:
+  contents: write
+
+jobs:
+  espeak:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tải eSpeak NG (bộ đọc tiếng Việt miễn phí, mã nguồn mở GPLv3) từ F-Droid
+        run: |
+          curl -fsSL https://f-droid.org/repo/com.reecedunn.espeak_22.apk -o eSpeakNG.apk
+          ls -la eSpeakNG.apk
+          unzip -l eSpeakNG.apk | tail -1
+      - name: Đăng lên release "giong-noi"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete giong-noi --yes --cleanup-tag || true
+          gh release create giong-noi eSpeakNG.apk --prerelease \
+            --title "Bộ đọc giọng nói tiếng Việt (eSpeak NG)" \
+            --notes "eSpeak NG 1.52.0 cho Android 5 trở lên, tải nguyên bản từ F-Droid (com.reecedunn.espeak). Phần mềm tự do theo giấy phép GPLv3, mã nguồn: https://github.com/espeak-ng/espeak-ng"
