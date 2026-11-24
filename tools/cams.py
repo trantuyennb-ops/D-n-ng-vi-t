@@ -3,7 +3,9 @@ import json
 try:
     els = json.load(open('/tmp/cams.json')).get('elements', [])
 except Exception:
-    els = []
+    els = None
+if not els:
+    print('Không tải được dữ liệu mới, giữ file cũ'); raise SystemExit(0)
 seen, out = set(), []
 for e in els:
     if e.get('type') == 'node' and 'lat' in e and e['id'] not in seen:

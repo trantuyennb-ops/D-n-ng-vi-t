@@ -97,6 +97,9 @@ body.night #steps div{border-color:#3c4043}body.night #spd{border-color:#5f6368}
   #navbar>*+*{margin-left:12px}#bMain>*+*{margin-left:12px}#lanes span+span{margin-left:4px}
   #fabs button+button{margin-top:10px}#steps div>*+*{margin-left:10px}
 }
+.altTip{background:#fff;border:1px solid #9aa0a6;border-radius:8px;font-weight:600;color:#3c4043;padding:2px 6px;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+#lim.est{border-style:dashed;position:relative}
+#lim.est:after{content:'ước tính';position:absolute;bottom:-16px;left:50%;transform:translateX(-50%);font-size:10px;font-weight:400;color:#5f6368;white-space:nowrap}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -108,7 +111,8 @@ body.night #steps div{border-color:#3c4043}body.night #spd{border-color:#5f6368}
   <div class="row"><span class="dot r"></span><input id="inTo" placeholder="Tìm điểm đến..." autocomplete="off"><button id="btnMic" title="Tìm bằng giọng nói" hidden><svg viewBox="0 0 24 24" width="22" height="22"><path fill="#1a73e8" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg></button><button id="clr" title="Xóa">✕</button></div>
   <div id="sugg"></div>
   <div id="modes">
-    <button data-p="car" class="on">🚗 Xe máy/Ô tô</button>
+    <button data-p="car" class="on">🚗 Ô tô</button>
+    <button data-p="moto">Xe máy</button>
     <button data-p="bike">🚲 Xe đạp</button>
     <button data-p="foot">🚶 Đi bộ</button>
   </div>
@@ -157,11 +161,12 @@ body.night #steps div{border-color:#3c4043}body.night #spd{border-color:#5f6368}
 const ROUTERS = {
   car:  ['https://routing.openstreetmap.de/routed-car/route/v1/driving/', 'https://router.project-osrm.org/route/v1/driving/'],
   bike: ['https://routing.openstreetmap.de/routed-bike/route/v1/driving/'],
+  moto: ['https://routing.openstreetmap.de/routed-car/route/v1/driving/', 'https://router.project-osrm.org/route/v1/driving/'],
   foot: ['https://routing.openstreetmap.de/routed-foot/route/v1/driving/']
 };
 const NOMINATIM = 'https://nominatim.openstreetmap.org/';
-const SIM_SPEED = {car: 40, bike: 15, foot: 5}; // km/h khi mô phỏng
-const OFF_ROUTE_M = {car: 45, bike: 35, foot: 30};
+const SIM_SPEED = {car: 40, moto: 35, bike: 15, foot: 5}; // km/h khi mô phỏng
+const OFF_ROUTE_M = {car: 45, moto: 40, bike: 35, foot: 30};
 
 /* ============ TRẠNG THÁI ============ */
 const S = {
@@ -544,17 +549,19 @@ function prep(r) {
   }));
   const ms = [];
   r.legs.forEach(leg => ((leg.annotation && leg.annotation.maxspeed) || []).forEach(m => ms.push(m && m.speed ? Math.round(m.unit === 'mph' ? m.speed * 1.609 : m.speed) : null)));
-  return {coords: c, cum, total: cum[cum.length-1], duration: r.duration, distance: r.distance, steps, maxspeed: ms, cams: []};
+  const sp = [];
+  r.legs.forEach(leg => ((leg.annotation && leg.annotation.speed) || []).forEach(v => sp.push(v || 0)));
+  return {coords: c, cum, total: cum[cum.length-1], duration: r.duration, distance: r.distance, steps, maxspeed: ms, speeds: sp, cams: []};
 }
 
 function clearRoute() { S.layers.forEach(l => map.removeLayer(l)); S.layers = []; S.routes = []; }
 
 async function fetchRoute(from, to) {
-  const q = `${from[1]},${from[0]};${to[1]},${to[0]}?overview=full&geometries=geojson&steps=true&alternatives=true`;
+  const q = `${from[1]},${from[0]};${to[1]},${to[0]}?overview=full&geometries=geojson&steps=true&alternatives=3`;
   let lastErr;
   for (const base of ROUTERS[S.profile]) {
     try {
-      let res = await fetch(base + q + '&annotations=maxspeed');
+      let res = await fetch(base + q + '&annotations=maxspeed,speed');
       if (!res.ok) res = await fetch(base + q);
       const j = await res.json();
       if (j.code === 'Ok' && j.routes.length) return j.routes;
@@ -576,7 +583,7 @@ async function route(keepNav = false) {
     if (S.origin) originMarker.setLatLng(from).addTo(map); else map.removeLayer(originMarker);
     drawRoutes(!keepNav);
     if (keepNav) matchCams(); else loadCams();
-    if (keepNav) { S.hintIdx = 0; S.spoken = {}; S.offCount = 0; }
+    if (keepNav) { S.hintIdx = 0; S.spoken = {}; S.offCount = 0; if (S.nav) { toast('✅ Đã có đường mới'); say('Đã tìm được đường mới. ' + fmtDur(S.routes[0].duration) + ' nữa đến nơi.', true); } }
     else showSheet();
   } catch (e) {
     toast('Không tìm được đường: ' + (e.message || 'lỗi mạng'), 4000);
@@ -589,6 +596,8 @@ function drawRoutes(fit) {
     if (i === S.sel) return;
     if (S.nav) return;
     const l = L.polyline(r.coords, {color: '#9aa0a6', weight: 7, opacity: .9}).addTo(map);
+    const diff = Math.round((r.duration - S.routes[S.sel].duration) / 60);
+    l.bindTooltip(`${fmtDur(r.duration)}${diff ? (diff > 0 ? ' (+' + diff + ' ph)' : ' (' + diff + ' ph)') : ''}`, {permanent: true, direction: 'center', className: 'altTip'});
     l.on('click', ev => { L.DomEvent.stop(ev); S.sel = i; drawRoutes(false); showSheet(); });
     S.layers.push(l);
   });
@@ -605,7 +614,8 @@ function showSheet() {
   S.routes.forEach((r, i) => {
     const b = document.createElement('button');
     b.className = i === S.sel ? 'on' : '';
-    b.innerHTML = `<b>${fmtDur(r.duration)}</b><span>${fmtDist(r.distance)}${i === 0 ? ' · Nhanh nhất' : ''}</span>`;
+    const best = Math.min.apply(null, S.routes.map(x => x.duration)), more = Math.round((r.duration - best) / 60);
+    b.innerHTML = `<b>${fmtDur(r.duration)}</b><span>${fmtDist(r.distance)} · ${more <= 0 ? 'Nhanh nhất' : 'chậm hơn ' + more + ' phút'}</span>`;
     b.onclick = () => { S.sel = i; drawRoutes(false); showSheet(); };
     alts.appendChild(b);
   });
@@ -653,6 +663,34 @@ function applyRot(on) {
   const h = S.heading || 0, d = ((h - S.rotPrev + 540) % 360) - 180;
   S.rotPrev = h; S.rot += d;
   el.style.webkitTransform = el.style.transform = `rotate(${-S.rot}deg)`;
+}
+
+/* ============ GIỚI HẠN TỐC ĐỘ THEO KHU VỰC (Thông tư 38/2024) ============ */
+// Trong khu đông dân cư: 60 (đường đôi) / 50 (đường hai chiều).
+// Ngoài khu đông dân cư: ô tô con 90 / 80, xe mô tô 70 / 60. Đường cao tốc theo biển báo.
+S.area = null; S.areaAt = null; S.areaT = 0;
+function estLimit(r, i, step) {
+  if (S.profile === 'bike' || S.profile === 'foot') return null;
+  const name = ((step && (step.name + ' ' + (step.ref || ''))) || '');
+  if (/cao tốc|\bCT[.\s]?\d/i.test(name)) return null; // cao tốc: theo biển báo từng đoạn
+  const divided = (r.speeds[i] || 0) >= 19; // đường lớn (quốc lộ đôi) theo dữ liệu tuyến
+  if (S.area !== 'rural') return divided ? 60 : 50; // chưa rõ khu vực thì lấy mức thấp cho an toàn
+  if (S.profile === 'moto') return divided ? 70 : 60;
+  return divided ? 90 : 80;
+}
+function areaTick() {
+  if (!S.me) return;
+  if (S.areaAt && hav(S.areaAt, S.me) < 800 && Date.now() - S.areaT < 120000) return;
+  S.areaAt = S.me.slice(); S.areaT = Date.now();
+  const p = S.areaAt;
+  fetch(`${NOMINATIM}reverse?format=jsonv2&zoom=16&accept-language=vi&lat=${p[0]}&lon=${p[1]}`).then(r => r.json()).then(j => {
+    const t = (j && j.display_name) || '';
+    const a = /(^|, )(Phường|Thị trấn|Quận)\s/.test(t) ? 'urban' : /(^|, )(Xã|Đặc khu)\s/.test(t) ? 'rural' : null;
+    if (!a || a === S.area) return;
+    const prev = S.area; S.area = a;
+    if (prev && S.nav && (S.profile === 'car' || S.profile === 'moto'))
+      say(a === 'urban' ? 'Đi vào khu đông dân cư, chú ý giảm tốc độ' : 'Ra khỏi khu đông dân cư', true);
+  }).catch(() => {});
 }
 
 /* ============ CAMERA GIAO THÔNG ============ */
@@ -788,7 +826,7 @@ function startNav(sim) {
   beginNav(sim);
 }
 function beginNav(sim) {
-  S.nav = true; S.follow = true; S.hintIdx = 0; S.spoken = {}; S.offCount = 0; S.spokenCam = {}; S.lastLim = undefined;
+  S.nav = true; S.follow = true; S.hintIdx = 0; S.spoken = {}; S.offCount = 0; S.spokenCam = {}; S.lastLim = undefined; S.areaAt = null;
   $('btnCam').hidden = false;
   $('top').hidden = true; $('sheet').hidden = true; $('banner').hidden = false; $('navbar').hidden = false;
   $('btnLoc').classList.add('on');
@@ -837,8 +875,16 @@ function navUpdate() {
   // Lệch tuyến -> tìm đường lại
   if (!S.sim && pr.d > OFF_ROUTE_M[S.profile] && S.acc < 60) {
     S.offCount++;
-    if (S.offCount >= 3 && Date.now() - S.lastReroute > 8000) {
+    if (S.offCount >= ((S.speed || 0) > 8 ? 2 : 3) && Date.now() - S.lastReroute > 8000) {
       S.lastReroute = Date.now(); S.offCount = 0;
+      // Đang đi trên một tuyến thay thế khác -> chuyển luôn sang tuyến đó
+      const alt = S.routes.findIndex((rr, idx) => idx !== S.sel && projFull(S.me, rr).d < 25);
+      if (alt >= 0) {
+        S.sel = alt; S.hintIdx = 0; S.spoken = {}; drawRoutes(false);
+        say('Đã chuyển sang tuyến khác. ' + fmtDur(S.routes[alt].duration) + ' nữa đến nơi.');
+        toast('↪ Đã chuyển sang tuyến khác');
+        return;
+      }
       say('Bạn đã đi lệch tuyến. Đang tìm đường mới.');
       toast('Đang tìm đường mới...');
       S.origin = null;
@@ -868,12 +914,15 @@ function navUpdate() {
   $('spdV').textContent = kmh;
 
   // Biển giới hạn tốc độ + cảnh báo quá tốc độ
-  const lim = r.maxspeed[pr.i] || null;
+  const exact = r.maxspeed[pr.i] || null;
+  const lim = exact || estLimit(r, pr.i, r.steps[k]);
   $('lim').hidden = !lim; if (lim) $('limV').textContent = lim;
-  const over = !!lim && kmh > lim + 2;
+  $('lim').classList.toggle('est', !exact && !!lim);
+  const over = !!lim && kmh > lim + (exact ? 2 : 5);
+  areaTick();
   $('spd').classList.toggle('over', over);
   let limMsg = '';
-  if (lim && S.lastLim !== undefined && lim !== S.lastLim && (!S.lastLim || lim < S.lastLim)) limMsg = `Tốc độ tối đa ${lim} ki lô mét một giờ`;
+  if (exact && S.lastLim !== undefined && lim !== S.lastLim && (!S.lastLim || lim < S.lastLim)) limMsg = `Tốc độ tối đa ${lim} ki lô mét một giờ`;
   S.lastLim = lim;
   if (over && Date.now() - (S.lastOver || 0) > 30000) { S.lastOver = Date.now(); beep(); limMsg = `Bạn đang chạy quá tốc độ. Tối đa ${lim} ki lô mét một giờ`; }
 
