@@ -56,4 +56,5 @@ dependencies {
     implementation("androidx.webkit:webkit:1.12.1")
     // Bộ kết nối bảo mật mới (TLS 1.3) cho Android cũ
     implementation("org.conscrypt:conscrypt-android:2.5.2")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }

@@ -39,6 +39,10 @@ import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocketFactory
 import javax.net.ssl.TrustManagerFactory
+import javax.net.ssl.X509TrustManager
+import java.util.concurrent.TimeUnit
+import okhttp3.OkHttpClient
+import okhttp3.Request
 
 class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
@@ -55,7 +59,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     // Android cũ (dưới 7.1) thiếu chứng chỉ gốc Let's Encrypt mà máy chủ bản đồ/tìm đường dùng.
     // Trên các máy đó, app tự tải dữ liệu bằng chứng chỉ đóng kèm thay cho WebView.
     private val needOwnTls = Build.VERSION.SDK_INT < 25
-    private val sslFactory: SSLSocketFactory? by lazy {
+    private val trust: Pair<SSLSocketFactory, X509TrustManager>? by lazy {
         try {
             val ks = KeyStore.getInstance(KeyStore.getDefaultType()); ks.load(null, null)
             val sys = KeyStore.getInstance("AndroidCAStore"); sys.load(null, null)
@@ -65,37 +69,47 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 resources.openRawResource(id).use { ks.setCertificateEntry("dd_extra_$i", cf.generateCertificate(it)) }
             }
             val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()); tmf.init(ks)
-            val ctx = SSLContext.getInstance("TLS"); ctx.init(null, tmf.trustManagers, null)
-            ctx.socketFactory
+            val tm = tmf.trustManagers.first { it is X509TrustManager } as X509TrustManager
+            val ctx = SSLContext.getInstance("TLS"); ctx.init(null, arrayOf(tm), null)
+            Pair(ctx.socketFactory, tm)
         } catch (e: Exception) { null }
+    }
+    private val sslFactory: SSLSocketFactory? get() = trust?.first
+    // OkHttp: bộ tải dữ liệu hiện đại, dùng được kết nối bảo mật mới (TLS 1.3) qua Conscrypt
+    private val http: OkHttpClient? by lazy {
+        val t = trust ?: return@lazy null
+        try {
+            OkHttpClient.Builder()
+                .sslSocketFactory(t.first, t.second)
+                .connectTimeout(15, TimeUnit.SECONDS).readTimeout(25, TimeUnit.SECONDS)
+                .followRedirects(true).followSslRedirects(true)
+                .build()
+        } catch (e: Throwable) { null }
     }
     private val skipHeaders = setOf("accept-encoding", "if-none-match", "if-modified-since", "range", "origin")
 
     private fun nativeFetch(req: WebResourceRequest): WebResourceResponse? {
-        val f = sslFactory ?: return null
+        val client = http ?: return null
         return try {
-            val c = URL(req.url.toString()).openConnection() as HttpsURLConnection
-            c.sslSocketFactory = f
-            c.connectTimeout = 15000; c.readTimeout = 25000
-            c.instanceFollowRedirects = true
-            req.requestHeaders?.forEach { (k, v) -> if (k.lowercase() !in skipHeaders) c.setRequestProperty(k, v) }
-            c.setRequestProperty("User-Agent", userAgent)
-            val code = c.responseCode
-            if (code in 300..399) return null
-            val stream = (if (code >= 400) c.errorStream else c.inputStream) ?: ByteArrayInputStream(ByteArray(0))
-            val ct = c.contentType ?: "application/octet-stream"
+            val rb = Request.Builder().url(req.url.toString())
+            req.requestHeaders?.forEach { (k, v) -> if (k.lowercase() !in skipHeaders && !k.equals("User-Agent", true)) rb.header(k, v) }
+            rb.header("User-Agent", userAgent)
+            val resp = client.newCall(rb.build()).execute()
+            val code = resp.code
+            if (code in 300..399) { resp.close(); return null }
+            val body = resp.body ?: run { resp.close(); return null }
+            val ct = resp.header("Content-Type") ?: "application/octet-stream"
             val mime = ct.substringBefore(';').trim()
             val enc = Regex("charset=([^;]+)", RegexOption.IGNORE_CASE).find(ct)?.groupValues?.get(1)?.trim()
             val headers = HashMap<String, String>()
-            for ((k, v) in c.headerFields) {
-                if (k == null || v.isNullOrEmpty()) continue
-                val lk = k.lowercase()
+            for (name in resp.headers.names()) {
+                val lk = name.lowercase()
                 if (lk == "content-encoding" || lk == "content-length" || lk == "transfer-encoding" || lk.startsWith("access-control")) continue
-                headers[k] = v.joinToString(",")
+                headers[name] = resp.headers.values(name).joinToString(",")
             }
             headers["Access-Control-Allow-Origin"] = "*"
-            val reason = c.responseMessage?.takeIf { it.isNotBlank() } ?: "OK"
-            WebResourceResponse(mime, enc, code, reason, headers, stream)
+            val reason = resp.message.takeIf { it.isNotBlank() } ?: "OK"
+            WebResourceResponse(mime, enc, code, reason, headers, body.byteStream())
         } catch (e: Exception) { null }
     }
 
@@ -226,8 +240,14 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     }
 
     private fun testUrl(url: String, own: Boolean): String = try {
+        if (own) {
+            val cl = http ?: throw Exception("không tạo được OkHttp")
+            cl.newCall(Request.Builder().url(url).header("User-Agent", userAgent).build()).execute().use { "mã ${it.code}" }
+        } else testPlain(url)
+    } catch (e: Exception) { (e.javaClass.simpleName + ": " + (e.message ?: "")).take(140) }
+
+    private fun testPlain(url: String): String = try {
         val c = URL(url).openConnection() as HttpsURLConnection
-        if (own) sslFactory?.let { c.sslSocketFactory = it }
         c.connectTimeout = 10000; c.readTimeout = 10000
         c.setRequestProperty("User-Agent", userAgent)
         val code = c.responseCode
@@ -264,7 +284,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             "Bản đồ" to "https://tile.openstreetmap.org/10/814/450.png")
         for ((name, u) in urls) {
             val plain = testUrl(u, false); val own = testUrl(u, true)
-            net.put(JSONObject().put("name", name).put("ok", own.startsWith("mã 2")).put("res", "thường: $plain | chứng chỉ kèm: $own"))
+            net.put(JSONObject().put("name", name).put("ok", own.startsWith("mã 2")).put("res", "thường: $plain | app: $own"))
         }
         o.put("net", net)
         return o.toString()
