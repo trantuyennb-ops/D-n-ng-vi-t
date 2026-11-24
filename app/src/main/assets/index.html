@@ -108,7 +108,7 @@ body.night #steps div{border-color:#3c4043}body.night #spd{border-color:#5f6368}
   <div class="row"><span class="dot r"></span><input id="inTo" placeholder="Tìm điểm đến..." autocomplete="off"><button id="btnMic" title="Tìm bằng giọng nói" hidden><svg viewBox="0 0 24 24" width="22" height="22"><path fill="#1a73e8" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg></button><button id="clr" title="Xóa">✕</button></div>
   <div id="sugg"></div>
   <div id="modes">
-    <button data-p="car" class="on">🛵 Xe máy/Ô tô</button>
+    <button data-p="car" class="on">🚗 Xe máy/Ô tô</button>
     <button data-p="bike">🚲 Xe đạp</button>
     <button data-p="foot">🚶 Đi bộ</button>
   </div>
@@ -123,7 +123,7 @@ body.night #steps div{border-color:#3c4043}body.night #spd{border-color:#5f6368}
 
 <div id="fabs">
   <button id="btnCam" title="Đánh dấu camera tại đây" hidden>📷</button>
-  <button id="btnLayer" title="Lớp bản đồ">🛰</button>
+  <button id="btnLayer" title="Lớp bản đồ">🌐</button>
   <button id="btnVoice" class="on" title="Giọng nói">🔊</button>
   <button id="btnLoc" title="Vị trí của tôi">◎</button>
   <button id="btnDiag" title="Kiểm tra lỗi">🔧</button>
@@ -239,16 +239,20 @@ const SmartSat = L.TileLayer.extend({
     const box = document.createElement('div');
     box.style.overflow = 'hidden';
     const z0 = this._getZoomForUrl();
+    let noCors = !!window.Android && /Chrome\/([0-5]\d|6[0-4])\./.test(navigator.userAgent); // WebView cũ: bỏ kiểm tra ô xám
     const load = (depth, src) => {
       const s = 1 << depth, z = z0 - depth, x = coords.x >> depth, y = coords.y >> depth;
       const img = new Image();
-      img.crossOrigin = 'anonymous';
       img.onload = () => {
         if (depth < 4 && z > 3 && isNoDataTile(img)) { load(depth + 1, src); return; }
         img.style.cssText = `position:absolute;width:${size*s}px;height:${size*s}px;left:${-(coords.x % s)*size}px;top:${-(coords.y % s)*size}px`;
         box.appendChild(img); done(null, box);
       };
-      img.onerror = () => { if (src + 1 < SAT_URLS.length) load(depth, src + 1); else done(new Error('tile'), box); };
+      img.onerror = () => {
+        if (img.crossOrigin && !noCors) { noCors = true; load(depth, src); return; }
+        if (src + 1 < SAT_URLS.length) load(depth, src + 1); else done(new Error('tile'), box);
+      };
+      if (!noCors) img.crossOrigin = 'anonymous';
       img.src = SAT_URLS[src] + z + '/' + y + '/' + x;
     };
     load(0, 0);
@@ -269,7 +273,7 @@ $('btnLayer').onclick = () => {
   sat = !sat;
   document.body.classList.toggle('sat', sat);
   if (sat) { map.removeLayer(streetLayer()); baseSat.addTo(map); $('btnLayer').textContent = '🗺'; }
-  else { map.removeLayer(baseSat); streetLayer().addTo(map); $('btnLayer').textContent = '🛰'; }
+  else { map.removeLayer(baseSat); streetLayer().addTo(map); $('btnLayer').textContent = '🌐'; }
 };
 // Bản đồ tối ban đêm (18h–6h) như Google Maps, đỡ chói mắt khi lái xe: làm tối bản đồ thường bằng bộ lọc màu
 let night = false;
