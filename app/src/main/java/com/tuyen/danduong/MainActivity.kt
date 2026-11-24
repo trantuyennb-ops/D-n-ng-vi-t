@@ -30,6 +30,8 @@ import java.net.URL
 import java.security.KeyStore
 import java.security.cert.CertificateFactory
 import java.util.Locale
+import org.json.JSONArray
+import org.json.JSONObject
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocketFactory
@@ -164,6 +166,12 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     /* ---------- Cầu nối JavaScript <-> Android ---------- */
     inner class Bridge {
         @JavascriptInterface fun startLocation() { main.post { requestLocation() } }
+        @JavascriptInterface fun diag() {
+            Thread {
+                val j = try { runDiag() } catch (e: Exception) { JSONObject().put("error", e.toString()).toString() }
+                main.post { web.evaluateJavascript("window.onDiag&&onDiag(" + JSONObject.quote(j) + ")", null) }
+            }.start()
+        }
         @JavascriptInterface fun speak(text: String) { main.post { say(text) } }
         @JavascriptInterface fun speakAdd(text: String) { main.post { if (ttsReady) tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "nav2") } }
         @JavascriptInterface fun stopSpeak() { main.post { tts?.stop() } }
@@ -173,6 +181,60 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             }
         }
+    }
+
+    /* ---------- Kiểm tra lỗi ---------- */
+    private fun webViewInfo(): String {
+        if (Build.VERSION.SDK_INT >= 26) {
+            try { WebView.getCurrentWebViewPackage()?.let { return it.packageName + " " + it.versionName } } catch (_: Exception) {}
+        }
+        for (p in listOf("com.google.android.webview", "com.android.webview", "com.android.chrome")) {
+            try { val i = packageManager.getPackageInfo(p, 0); return p + " " + i.versionName } catch (_: Exception) {}
+        }
+        return "không rõ"
+    }
+
+    private fun testUrl(url: String, own: Boolean): String = try {
+        val c = URL(url).openConnection() as HttpsURLConnection
+        if (own) sslFactory?.let { c.sslSocketFactory = it }
+        c.connectTimeout = 10000; c.readTimeout = 10000
+        c.setRequestProperty("User-Agent", userAgent)
+        val code = c.responseCode
+        c.disconnect()
+        "mã $code"
+    } catch (e: Exception) { (e.javaClass.simpleName + ": " + (e.message ?: "")).take(140) }
+
+    private fun runDiag(): String {
+        val o = JSONObject()
+        o.put("release", Build.VERSION.RELEASE); o.put("sdk", Build.VERSION.SDK_INT)
+        o.put("device", Build.MANUFACTURER + " " + Build.MODEL + " · " + Build.HARDWARE)
+        o.put("webview", webViewInfo())
+        o.put("locPerm", hasLocPerm())
+        o.put("gpsOn", try { locationManager?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true } catch (_: Exception) { false })
+        o.put("ttsReady", ttsReady)
+        val t = tts
+        o.put("ttsDefault", try { t?.defaultEngine ?: "" } catch (_: Exception) { "" })
+        val eng = JSONArray(); try { t?.engines?.forEach { eng.put(it.label.toString() + " (" + it.name + ")") } } catch (_: Exception) {}
+        o.put("ttsEngines", eng)
+        val vi = try { t?.isLanguageAvailable(Locale("vi", "VN")) } catch (_: Exception) { null }
+        o.put("viStatus", when (vi) {
+            null -> "không kiểm tra được"
+            TextToSpeech.LANG_MISSING_DATA -> "❌ thiếu dữ liệu (cần tải giọng Tiếng Việt)"
+            TextToSpeech.LANG_NOT_SUPPORTED -> "❌ công cụ hiện tại không hỗ trợ tiếng Việt"
+            else -> "✅ có ($vi)"
+        })
+        o.put("ssl", sslFactory != null)
+        val net = JSONArray()
+        val urls = listOf(
+            "Tìm địa điểm" to "https://nominatim.openstreetmap.org/status",
+            "Tìm đường" to "https://routing.openstreetmap.de/routed-car/route/v1/driving/105.97,20.25;105.90,20.25?overview=false",
+            "Bản đồ" to "https://tile.openstreetmap.org/10/814/450.png")
+        for ((name, u) in urls) {
+            val plain = testUrl(u, false); val own = testUrl(u, true)
+            net.put(JSONObject().put("name", name).put("ok", own.startsWith("mã 2")).put("res", "thường: $plain | chứng chỉ kèm: $own"))
+        }
+        o.put("net", net)
+        return o.toString()
     }
 
     /* ---------- Vị trí ---------- */

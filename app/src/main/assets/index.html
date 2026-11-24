@@ -87,6 +87,10 @@ body.night #steps div{border-color:#3c4043}body.night #spd{border-color:#5f6368}
   #fabs{bottom:20px}
   #sugg{max-height:calc(100vh - 200px)}
 }
+#diag{position:absolute;inset:0;z-index:3000;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:12px}
+#diagBox{background:#fff;color:#202124;border-radius:16px;max-width:640px;width:100%;max-height:100%;overflow:auto;padding:16px}
+#diagBox h3{margin:0 0 10px}#diagOut{font-size:14px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+#diagBox button{margin-top:12px;width:100%;padding:12px;border-radius:24px;background:#1a73e8;color:#fff;font-weight:600;font-size:16px}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -116,6 +120,7 @@ body.night #steps div{border-color:#3c4043}body.night #spd{border-color:#5f6368}
   <button id="btnLayer" title="Lớp bản đồ">🛰</button>
   <button id="btnVoice" class="on" title="Giọng nói">🔊</button>
   <button id="btnLoc" title="Vị trí của tôi">◎</button>
+  <button id="btnDiag" title="Kiểm tra lỗi">🔧</button>
 </div>
 
 <div id="sheet" class="card" hidden>
@@ -137,6 +142,7 @@ body.night #steps div{border-color:#3c4043}body.night #spd{border-color:#5f6368}
 </div>
 
 <div id="toast"></div>
+<div id="diag" hidden><div id="diagBox"><h3>🔧 Kiểm tra app</h3><div id="diagOut"></div><button id="diagClose">Đóng</button></div></div>
 
 <script>
 'use strict';
@@ -360,7 +366,7 @@ function onSearchInput(e) {
         const parts = r.display_name.split(', ');
         return {lat: +r.lat, lng: +r.lon, name: r.name || parts[0], sub: parts.slice(1, 4).join(', ')};
       }));
-    } catch (err) { if (err.name !== 'AbortError') toast('Lỗi tìm kiếm, kiểm tra mạng'); }
+    } catch (err) { if (err.name !== 'AbortError') toast('Lỗi tìm kiếm: ' + (err.message || err) + ' — bấm 🔧 để kiểm tra', 5000); }
   }, 600);
 }
 ['inFrom', 'inTo'].forEach(id => {
@@ -847,6 +853,53 @@ window.onBack = () => {
   if (!$('sheet').hidden) { $('clr').click(); return true; }
   return false;
 };
+/* ============ KIỂM TRA LỖI ============ */
+const DIAG_URLS = [
+  ['Bản đồ', 'https://tile.openstreetmap.org/10/814/450.png'],
+  ['Ảnh vệ tinh', 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/10/450/814'],
+  ['Tìm địa điểm', NOMINATIM + 'search?format=jsonv2&limit=1&q=Ninh%20Binh'],
+  ['Tìm đường', ROUTERS.car[0] + '105.97,20.25;105.90,20.25?overview=false'],
+  ['Camera (Overpass)', 'https://overpass-api.de/api/interpreter?data=' + encodeURIComponent('[out:json];node(1);out;')]
+];
+let diagLines = [];
+function diagRender() { $('diagOut').textContent = diagLines.join('\n'); }
+function diagAdd(t) { diagLines.push(t); diagRender(); }
+function fetchT(url, ms) {
+  return new Promise((ok, bad) => { const t = setTimeout(() => bad(new Error('hết thời gian chờ')), ms); fetch(url).then(r => { clearTimeout(t); ok(r); }, e => { clearTimeout(t); bad(e); }); });
+}
+async function runDiag() {
+  $('diag').hidden = false; diagLines = [];
+  const m = navigator.userAgent.match(/Chrome\/([\d.]+)/);
+  diagAdd('Trình duyệt nội bộ (WebView): ' + (m ? 'Chrome ' + m[1] : navigator.userAgent));
+  diagAdd('Vị trí: ' + (S.me ? `✅ ${S.me[0].toFixed(5)}, ${S.me[1].toFixed(5)} (sai số ${Math.round(S.acc)} m)` : '❌ chưa có tín hiệu GPS'));
+  diagAdd('\n— Kết nối từ giao diện app —');
+  for (const [name, url] of DIAG_URLS) {
+    const t0 = Date.now();
+    try { const r = await fetchT(url, 12000); diagAdd(`${r.ok ? '✅' : '⚠️'} ${name}: mã ${r.status} (${Date.now() - t0} ms)`); }
+    catch (e) { diagAdd(`❌ ${name}: ${e.message || e}`); }
+  }
+  if (window.Android && Android.diag) { diagAdd('\n— Thông tin máy (đang kiểm tra...) —'); Android.diag(); }
+}
+window.onDiag = json => {
+  try {
+    const d = JSON.parse(json);
+    diagLines = diagLines.filter(l => l.indexOf('đang kiểm tra') < 0);
+    diagAdd('\n— Thông tin máy —');
+    diagAdd(`Android thật: ${d.release} (SDK ${d.sdk}) · ${d.device}`);
+    diagAdd('Gói WebView: ' + d.webview);
+    diagAdd(`Quyền vị trí: ${d.locPerm ? '✅' : '❌ chưa cho phép'} · GPS: ${d.gpsOn ? '✅ bật' : '❌ tắt'}`);
+    diagAdd(`Bộ đọc giọng nói: ${d.ttsReady ? '✅ sẵn sàng' : '❌ chưa sẵn sàng'} · công cụ mặc định: ${d.ttsDefault || 'không có'}`);
+    diagAdd('Các công cụ giọng nói: ' + (d.ttsEngines.length ? d.ttsEngines.join(', ') : 'KHÔNG CÓ'));
+    diagAdd('Giọng tiếng Việt: ' + d.viStatus);
+    diagAdd('Chứng chỉ đóng kèm: ' + (d.ssl ? '✅' : '❌'));
+    diagAdd('\n— Kết nối trực tiếp từ Android —');
+    d.net.forEach(n => diagAdd(`${n.ok ? '✅' : '❌'} ${n.name}: ${n.res}`));
+    diagAdd('\n👉 Chụp màn hình này gửi cho người hỗ trợ.');
+  } catch (e) { diagAdd('Lỗi đọc kết quả: ' + e.message); }
+};
+$('btnDiag').onclick = runDiag;
+$('diagClose').onclick = () => { $('diag').hidden = true; };
+
 function stopSim() { if (S.sim) { clearInterval(S.sim); S.sim = null; } }
 </script>
 </body>
