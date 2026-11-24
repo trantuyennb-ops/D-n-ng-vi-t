@@ -29,6 +29,8 @@ import androidx.webkit.WebViewAssetLoader
 import java.io.ByteArrayInputStream
 import java.net.URL
 import java.security.KeyStore
+import java.security.Security
+import org.conscrypt.Conscrypt
 import java.security.cert.CertificateFactory
 import java.util.Locale
 import org.json.JSONArray
@@ -119,6 +121,10 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Android cũ không hỗ trợ kết nối bảo mật kiểu mới -> dùng Conscrypt đóng kèm
+        if (Build.VERSION.SDK_INT < 29) {
+            try { Security.insertProviderAt(Conscrypt.newProvider(), 1) } catch (_: Throwable) {}
+        }
         tts = TextToSpeech(this, this)
         locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
 
@@ -239,6 +245,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         o.put("ttsReady", ttsReady)
         val t = tts
         o.put("ttsDefault", try { t?.defaultEngine ?: "" } catch (_: Exception) { "" })
+        o.put("ttsUsed", ttsUsed)
+        o.put("tls", try { Security.getProviders()[0].name } catch (_: Exception) { "?" })
         val eng = JSONArray(); try { t?.engines?.forEach { eng.put(it.label.toString() + " (" + it.name + ")") } } catch (_: Exception) {}
         o.put("ttsEngines", eng)
         val vi = try { t?.isLanguageAvailable(Locale("vi", "VN")) } catch (_: Exception) { null }
@@ -304,14 +312,38 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     }
 
     /* ---------- Giọng nói tiếng Việt ---------- */
+    // Dò lần lượt mọi bộ đọc trong máy, dùng bộ đầu tiên đọc được tiếng Việt
+    private var ttsEngines: List<String>? = null
+    private var ttsIdx = -1
+    private var ttsUsed = ""
+    private var viMissingData = false
+
     override fun onInit(status: Int) {
-        if (status != TextToSpeech.SUCCESS) { toast("Máy chưa có bộ đọc giọng nói"); return }
-        val r = tts?.setLanguage(Locale("vi", "VN")) ?: TextToSpeech.LANG_NOT_SUPPORTED
-        if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
-            toast("Chưa có giọng tiếng Việt. Hãy cài 'Dịch vụ lời nói của Google' và tải giọng Tiếng Việt.")
+        val t = tts
+        if (status == TextToSpeech.SUCCESS && t != null) {
+            val r = try { t.setLanguage(Locale("vi", "VN")) } catch (_: Exception) { TextToSpeech.LANG_NOT_SUPPORTED }
+            if (r >= TextToSpeech.LANG_AVAILABLE) {
+                ttsReady = true
+                ttsUsed = if (ttsIdx >= 0) ttsEngines!![ttsIdx] else ((try { t.defaultEngine } catch (_: Exception) { null }) ?: "mặc định")
+                t.setSpeechRate(1.0f)
+                return
+            }
+            if (r == TextToSpeech.LANG_MISSING_DATA) viMissingData = true
+        }
+        if (ttsEngines == null) ttsEngines = (try { t?.engines?.map { it.name } } catch (_: Exception) { null }) ?: emptyList()
+        ttsIdx++
+        val list = ttsEngines!!
+        if (ttsIdx < list.size) {
+            try { t?.shutdown() } catch (_: Exception) {}
+            tts = TextToSpeech(this, this, list[ttsIdx])
+            return
+        }
+        if (viMissingData) {
+            toast("Chưa tải giọng Tiếng Việt. Hãy tải giọng Tiếng Việt trong cài đặt giọng nói.")
             try { startActivity(Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA)) } catch (_: Exception) {}
-        } else ttsReady = true
-        tts?.setSpeechRate(1.0f)
+        } else {
+            toast("Máy chưa có giọng đọc tiếng Việt. Hãy cập nhật 'Dịch vụ lời nói của Google' trên CH Play hoặc cài eSpeak NG.")
+        }
     }
 
     private fun say(text: String) {

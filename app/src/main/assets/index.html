@@ -908,10 +908,10 @@ window.onDiag = json => {
     diagAdd(`Android thật: ${d.release} (SDK ${d.sdk}) · ${d.device}`);
     diagAdd('Gói WebView: ' + d.webview);
     diagAdd(`Quyền vị trí: ${d.locPerm ? '✅' : '❌ chưa cho phép'} · GPS: ${d.gpsOn ? '✅ bật' : '❌ tắt'}`);
-    diagAdd(`Bộ đọc giọng nói: ${d.ttsReady ? '✅ sẵn sàng' : '❌ chưa sẵn sàng'} · công cụ mặc định: ${d.ttsDefault || 'không có'}`);
+    diagAdd(`Bộ đọc giọng nói: ${d.ttsReady ? '✅ sẵn sàng, đang dùng ' + d.ttsUsed : '❌ chưa sẵn sàng'} · công cụ mặc định: ${d.ttsDefault || 'không có'}`);
     diagAdd('Các công cụ giọng nói: ' + (d.ttsEngines.length ? d.ttsEngines.join(', ') : 'KHÔNG CÓ'));
     diagAdd('Giọng tiếng Việt: ' + d.viStatus);
-    diagAdd('Chứng chỉ đóng kèm: ' + (d.ssl ? '✅' : '❌'));
+    diagAdd('Chứng chỉ đóng kèm: ' + (d.ssl ? '✅' : '❌') + ' · bộ kết nối: ' + d.tls);
     diagAdd('\n— Kết nối trực tiếp từ Android —');
     d.net.forEach(n => diagAdd(`${n.ok ? '✅' : '❌'} ${n.name}: ${n.res}`));
     diagAdd('\n👉 Chụp màn hình này gửi cho người hỗ trợ.');
