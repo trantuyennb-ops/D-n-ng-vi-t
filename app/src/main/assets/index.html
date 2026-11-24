@@ -100,6 +100,9 @@ body.night #steps div{border-color:#3c4043}body.night #spd{border-color:#5f6368}
 .altTip{background:#fff;border:1px solid #9aa0a6;border-radius:8px;font-weight:600;color:#3c4043;padding:2px 6px;box-shadow:0 1px 3px rgba(0,0,0,.3)}
 #lim.est{border-style:dashed;position:relative}
 #lim.est:after{content:'ước tính';position:absolute;bottom:-16px;left:50%;transform:translateX(-50%);font-size:10px;font-weight:400;color:#5f6368;white-space:nowrap}
+#alts .tags{display:block;font-style:normal;margin-top:4px}
+#alts em{display:inline-block;font-style:normal;font-size:11px;font-weight:600;background:#e6f4ea;color:#137333;border-radius:8px;padding:1px 6px;margin:2px 4px 0 0}
+#alts em.rec{background:#fce8b2;color:#7a4f01}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -554,6 +557,27 @@ function prep(r) {
   return {coords: c, cum, total: cum[cum.length-1], duration: r.duration, distance: r.distance, steps, maxspeed: ms, speeds: sp, cams: []};
 }
 
+// Chấm điểm tuyến: nhanh nhất, ngắn nhất, dễ đi nhất (ít chỗ rẽ), và tuyến đề xuất cân bằng cả ba
+const TURN_TYPES = ['turn', 'end of road', 'fork', 'roundabout', 'rotary', 'roundabout turn', 'on ramp', 'off ramp', 'merge'];
+function rankRoutes() {
+  const R = S.routes;
+  R.forEach(r => {
+    r.turns = r.steps.filter(st => TURN_TYPES.indexOf(st.maneuver.type) >= 0 && st.maneuver.modifier !== 'straight').length;
+    r.tags = [];
+  });
+  const minBy = f => R.reduce((bi, r, i) => f(r) < f(R[bi]) ? i : bi, 0);
+  const iFast = minBy(r => r.duration), iShort = minBy(r => r.distance), iEasy = minBy(r => r.turns);
+  const dMin = R[iFast].duration, lMin = R[iShort].distance, tMin = R[iEasy].turns;
+  // Điểm: thời gian quan trọng nhất (60%), quãng đường 20%, số chỗ rẽ 20%; mỗi chỗ rẽ coi như ~30 giây
+  R.forEach(r => { r.score = 0.6 * r.duration / dMin + 0.2 * r.distance / lMin + 0.2 * (r.duration + r.turns * 30) / (dMin + tMin * 30); });
+  S.rec = minBy(r => r.score);
+  if (R.length > 1) {
+    R[S.rec].tags.push('⭐ Đề xuất');
+    R[iFast].tags.push('Nhanh nhất');
+    R[iShort].tags.push('Ngắn nhất');
+    R[iEasy].tags.push('Dễ đi nhất');
+  }
+}
 function clearRoute() { S.layers.forEach(l => map.removeLayer(l)); S.layers = []; S.routes = []; }
 
 async function fetchRoute(from, to) {
@@ -579,11 +603,11 @@ async function route(keepNav = false) {
   try {
     const rs = await fetchRoute(from, [S.dest.lat, S.dest.lng]);
     clearRoute();
-    S.routes = rs.map(prep); S.sel = 0;
+    S.routes = rs.map(prep); rankRoutes(); S.sel = S.rec;
     if (S.origin) originMarker.setLatLng(from).addTo(map); else map.removeLayer(originMarker);
     drawRoutes(!keepNav);
     if (keepNav) matchCams(); else loadCams();
-    if (keepNav) { S.hintIdx = 0; S.spoken = {}; S.offCount = 0; if (S.nav) { toast('✅ Đã có đường mới'); say('Đã tìm được đường mới. ' + fmtDur(S.routes[0].duration) + ' nữa đến nơi.', true); } }
+    if (keepNav) { S.hintIdx = 0; S.spoken = {}; S.offCount = 0; if (S.nav) { toast('✅ Đã có đường mới'); say('Đã tìm được đường mới. ' + fmtDur(S.routes[S.sel].duration) + ' nữa đến nơi.', true); } }
     else showSheet();
   } catch (e) {
     toast('Không tìm được đường: ' + (e.message || 'lỗi mạng'), 4000);
@@ -614,15 +638,15 @@ function showSheet() {
   S.routes.forEach((r, i) => {
     const b = document.createElement('button');
     b.className = i === S.sel ? 'on' : '';
-    const durs = S.routes.map(x => x.duration), bestI = durs.indexOf(Math.min.apply(null, durs)), more = Math.round((r.duration - durs[bestI]) / 60);
-    b.innerHTML = `<b>${fmtDur(r.duration)}</b><span>${fmtDist(r.distance)} · ${i === bestI ? 'Nhanh nhất' : more <= 0 ? 'gần bằng' : 'chậm hơn ' + more + ' phút'}</span>`;
+    b.innerHTML = `<b>${fmtDur(r.duration)}</b><span>${fmtDist(r.distance)} · ${r.turns} chỗ rẽ</span>` +
+      (r.tags.length ? `<i class="tags">${r.tags.map(t => `<em class="${t === '⭐ Đề xuất' ? 'rec' : ''}">${t}</em>`).join('')}</i>` : '');
     b.onclick = () => { S.sel = i; drawRoutes(false); showSheet(); };
     alts.appendChild(b);
   });
   const r = S.routes[S.sel];
   const eta = new Date(Date.now() + r.duration * 1000);
   const roads = [...new Set(r.steps.map(s => s.name).filter(Boolean))].slice(0, 3).join(', ');
-  $('sum').textContent = `Đến lúc ${fmtClock(eta)}${roads ? ' · qua ' + roads : ''}`;
+  $('sum').textContent = `Đến lúc ${fmtClock(eta)} · ${r.turns} chỗ rẽ${roads ? ' · qua ' + roads : ''}`;
   $('steps').innerHTML = r.steps.map((s, i) => {
     const len = i < r.steps.length - 1 ? fmtDist(r.steps[i+1].at - s.at) : '';
     return `<div><i>${s.icon}</i><span>${esc(s.text)}</span><small>${len}</small></div>`;
