@@ -88,6 +88,9 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 .build()
         } catch (e: Throwable) { null }
     }
+    private val ownTlsHosts = setOf(
+        "nominatim.openstreetmap.org", "routing.openstreetmap.de", "router.project-osrm.org",
+        "overpass-api.de", "photon.komoot.io")
     private val skipHeaders = setOf("accept-encoding", "if-none-match", "if-modified-since", "range", "origin")
 
     private fun nativeFetch(req: WebResourceRequest): WebResourceResponse? {
@@ -166,7 +169,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             override fun shouldInterceptRequest(view: WebView, req: WebResourceRequest): WebResourceResponse? {
                 val u = req.url
                 if (u.host == "appassets.androidplatform.net") return assetLoader.shouldInterceptRequest(u)
-                if (needOwnTls && u.scheme == "https" && req.method == "GET") return nativeFetch(req)
+                // Chỉ đi đường riêng với máy chủ mà Android cũ không kết nối được; ảnh bản đồ để WebView tải song song cho nhanh
+                if (needOwnTls && u.scheme == "https" && req.method == "GET" && u.host in ownTlsHosts) return nativeFetch(req)
                 return null
             }
 
