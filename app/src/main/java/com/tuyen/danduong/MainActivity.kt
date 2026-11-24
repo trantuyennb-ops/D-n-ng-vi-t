@@ -13,7 +13,9 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.view.WindowManager
 import android.webkit.GeolocationPermissions
@@ -194,6 +196,9 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     inner class Bridge {
         @JavascriptInterface fun startLocation() { main.post { requestLocation() } }
         @JavascriptInterface fun voiceSearch() { main.post { startVoice() } }
+        @JavascriptInterface fun voiceStart() { main.post { startListen() } }
+        @JavascriptInterface fun voiceStop() { main.post { try { recognizer?.stopListening() } catch (_: Exception) {} } }
+        @JavascriptInterface fun voiceCancel() { main.post { try { recognizer?.cancel() } catch (_: Exception) {} } }
         @JavascriptInterface fun testVoice() {
             main.post {
                 if (ttsReady) say("Xin chào. Đây là giọng dẫn đường. Sau 200 mét, rẽ phải.")
@@ -217,7 +222,51 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
     }
 
-    /* ---------- Tìm kiếm bằng giọng nói ---------- */
+    /* ---------- Nghe giọng nói ngay trong app (hiện chữ khi đang nói, có nút Tìm ngay) ---------- */
+    private var recognizer: SpeechRecognizer? = null
+    private fun js(code: String) = web.evaluateJavascript(code, null)
+    private fun jsStr(fn: String, s: String) = js("window.$fn&&$fn(" + JSONObject.quote(s) + ")")
+
+    private fun startListen() {
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) { jsStr("onVoiceError", "Máy không có nhận giọng nói, chuyển sang hộp thoại Google"); startVoice(); return }
+        if (Build.VERSION.SDK_INT >= 23 && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 3); return
+        }
+        try { recognizer?.destroy() } catch (_: Exception) {}
+        val r = SpeechRecognizer.createSpeechRecognizer(this); recognizer = r
+        r.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(p: Bundle?) = jsStr("onVoiceState", "ready")
+            override fun onBeginningOfSpeech() = jsStr("onVoiceState", "speaking")
+            override fun onRmsChanged(v: Float) {}
+            override fun onBufferReceived(b: ByteArray?) {}
+            override fun onEndOfSpeech() = jsStr("onVoiceState", "processing")
+            override fun onError(code: Int) = jsStr("onVoiceError", when (code) {
+                SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Không nghe rõ, bấm Nói lại"
+                SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Lỗi mạng, kiểm tra kết nối rồi bấm Nói lại"
+                SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Cần cho phép dùng micro"
+                SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Micro đang bận, bấm Nói lại"
+                SpeechRecognizer.ERROR_CLIENT -> "Đã dừng"
+                else -> "Lỗi nhận giọng nói ($code), bấm Nói lại"
+            })
+            override fun onResults(b: Bundle?) = jsStr("onVoice", b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: "")
+            override fun onPartialResults(b: Bundle?) { b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.let { if (it.isNotBlank()) jsStr("onVoicePartial", it) } }
+            override fun onEvent(t: Int, p: Bundle?) {}
+        })
+        val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "vi-VN")
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "vi-VN")
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+            putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
+            // Ngừng nghe sớm hơn khi bạn im lặng (một số máy bỏ qua tùy chọn này)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 900L)
+        }
+        try { r.startListening(i) } catch (e: Exception) { jsStr("onVoiceError", "Không mở được micro: " + e.message) }
+    }
+
+    /* ---------- Tìm kiếm bằng giọng nói (hộp thoại Google, dự phòng) ---------- */
     private fun startVoice() {
         val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
@@ -341,6 +390,11 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     override fun onRequestPermissionsResult(code: Int, perms: Array<out String>, res: IntArray) {
         super.onRequestPermissionsResult(code, perms, res)
+        if (code == 3) {
+            if (res.isNotEmpty() && res[0] == PackageManager.PERMISSION_GRANTED) startListen()
+            else jsStr("onVoiceError", "Cần cho phép dùng micro để tìm bằng giọng nói")
+            return
+        }
         if (hasLocPerm()) startUpdates() else toast("Cần cho phép truy cập vị trí để dẫn đường")
     }
 
@@ -428,6 +482,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     override fun onDestroy() {
         locationManager?.removeUpdates(listener)
+        try { recognizer?.destroy() } catch (_: Exception) {}
         tts?.shutdown()
         web.destroy()
         super.onDestroy()

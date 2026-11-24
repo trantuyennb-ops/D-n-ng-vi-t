@@ -114,6 +114,14 @@ body.night #steps div{border-color:#3c4043}body.night #spd{border-color:#5f6368}
 #fInfo b{color:#202124;font-size:14px}
 #fCam.warn{color:#b06000;font-weight:700}
 body.night #fInfo b{color:#e8eaed}
+#voice{position:absolute;top:0;right:0;bottom:0;left:0;z-index:3000;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:16px}
+#vBox{background:#fff;border-radius:20px;padding:20px;width:100%;max-width:520px;text-align:center}
+#vMic{width:84px;height:84px;border-radius:50%;background:#9aa0a6;margin:0 auto 12px;display:flex;align-items:center;justify-content:center}
+#vMic.on{background:#ea4335;animation:vpulse 1.2s infinite}
+@keyframes vpulse{0%{box-shadow:0 0 0 0 rgba(234,67,53,.5)}100%{box-shadow:0 0 0 22px rgba(234,67,53,0)}}
+#vState{color:#5f6368;font-size:15px}
+#vText{font-size:24px;font-weight:700;margin:12px 0 16px;min-height:32px;color:#202124}
+body.night #vBox{background:#202124}body.night #vText{color:#e8eaed}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -171,6 +179,12 @@ body.night #fInfo b{color:#e8eaed}
   <div id="fLim" hidden><span id="fLimV"></span></div>
   <div id="fInfo"><b>Lái tự do</b><span id="fCam">Đang theo dõi camera và tốc độ</span></div>
 </div>
+<div id="voice" hidden><div id="vBox">
+  <div id="vMic"><svg viewBox="0 0 24 24" width="44" height="44"><path fill="#fff" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg></div>
+  <div id="vState">Đang chuẩn bị micro...</div>
+  <div id="vText">…</div>
+  <div class="btns"><button class="pri" id="vGo">✔ Tìm ngay</button><button id="vAgain">Nói lại</button><button id="vCancel">Hủy</button></div>
+</div></div>
 <div id="toast"></div>
 <div id="diag" hidden><div id="diagBox"><h3>🔧 Kiểm tra app</h3><div id="diagOut"></div><button id="diagVoice">🔊 Nghe thử giọng</button><button id="diagClose">Đóng</button></div></div>
 
@@ -417,7 +431,7 @@ function onSearchInput(e) {
       if (!items.length) { showSugg([{icon: '⚠', name: 'Không tìm thấy kết quả — thử nói hoặc gõ có dấu', none: true}]); return; }
       showSugg(items);
     } catch (err) { if (err.name !== 'AbortError') toast('Lỗi tìm kiếm: ' + (err.message || err) + ' — bấm 🔧 để kiểm tra', 5000); }
-  }, 600);
+  }, e.delay != null ? e.delay : 600);
 }
 ['inFrom', 'inTo'].forEach(id => {
   $(id).addEventListener('input', onSearchInput);
@@ -451,12 +465,36 @@ function setDest(d) {
   route();
 }
 if (window.Android && Android.voiceSearch) $('btnMic').hidden = false;
-$('btnMic').onclick = () => { S.activeInput = 'to'; toast('🎤 Hãy nói tên điểm đến...', 3000); Android.voiceSearch(); };
+$('btnMic').onclick = () => {
+  S.activeInput = 'to';
+  if (Android.voiceStart) { voiceOpen(); Android.voiceStart(); }
+  else { toast('🎤 Hãy nói tên điểm đến...', 3000); Android.voiceSearch(); }
+};
+/* ---- Màn hình nghe giọng nói: hiện chữ ngay khi nói, nút Tìm ngay ---- */
+S.voicePartial = '';
+function voiceOpen() { S.voicePartial = ''; $('vText').textContent = '…'; $('vState').textContent = 'Đang chuẩn bị micro...'; $('voice').hidden = false; $('vMic').classList.remove('on'); }
+function voiceClose() { $('voice').hidden = true; }
+window.onVoiceState = st => {
+  $('vState').textContent = st === 'ready' ? 'Mời bạn nói tên điểm đến' : st === 'speaking' ? 'Đang nghe... nói xong bấm Tìm ngay' : 'Đang xử lý...';
+  $('vMic').classList.toggle('on', st === 'speaking' || st === 'ready');
+};
+window.onVoicePartial = t => { if (t) { S.voicePartial = t; $('vText').textContent = t; } };
+window.onVoiceError = msg => {
+  if (S.voicePartial) { const t = S.voicePartial; voiceClose(); window.onVoice(t); return; }
+  $('vState').textContent = msg; $('vMic').classList.remove('on');
+};
+$('vGo').onclick = () => {
+  if (S.voicePartial) { const t = S.voicePartial; Android.voiceCancel(); voiceClose(); window.onVoice(t); } // dùng luôn chữ đã nghe được
+  else { $('vState').textContent = 'Đang xử lý...'; Android.voiceStop(); }
+};
+$('vCancel').onclick = () => { Android.voiceCancel(); voiceClose(); };
+$('vAgain').onclick = () => { voiceOpen(); Android.voiceStart(); };
 window.onVoice = text => {
+  voiceClose();
   if (!text) return;
   const inp = $('inTo'); inp.value = text; S.activeInput = 'to';
   toast('Đang tìm: ' + text);
-  onSearchInput({target: inp});
+  onSearchInput({target: inp, delay: 0}); // tìm ngay, không chờ
 };
 $('swap').onclick = () => {
   const from = S.origin || (S.me ? {lat: S.me[0], lng: S.me[1], name: 'Vị trí của bạn'} : null);
