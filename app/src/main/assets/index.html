@@ -614,8 +614,8 @@ function showSheet() {
   S.routes.forEach((r, i) => {
     const b = document.createElement('button');
     b.className = i === S.sel ? 'on' : '';
-    const best = Math.min.apply(null, S.routes.map(x => x.duration)), more = Math.round((r.duration - best) / 60);
-    b.innerHTML = `<b>${fmtDur(r.duration)}</b><span>${fmtDist(r.distance)} · ${more <= 0 ? 'Nhanh nhất' : 'chậm hơn ' + more + ' phút'}</span>`;
+    const durs = S.routes.map(x => x.duration), bestI = durs.indexOf(Math.min.apply(null, durs)), more = Math.round((r.duration - durs[bestI]) / 60);
+    b.innerHTML = `<b>${fmtDur(r.duration)}</b><span>${fmtDist(r.distance)} · ${i === bestI ? 'Nhanh nhất' : more <= 0 ? 'gần bằng' : 'chậm hơn ' + more + ' phút'}</span>`;
     b.onclick = () => { S.sel = i; drawRoutes(false); showSheet(); };
     alts.appendChild(b);
   });
