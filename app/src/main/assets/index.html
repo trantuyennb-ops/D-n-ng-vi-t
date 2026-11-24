@@ -122,6 +122,7 @@ body.night #steps div{border-color:#3c4043}body.night #spd{border-color:#5f6368}
 </div>
 
 <div id="fabs">
+  <button id="btnRot" title="Xoay bản đồ theo hướng đi"><svg viewBox="0 0 24 24" width="24" height="24"><path d="M12 2 7.5 12h9z" fill="#ea4335"/><path d="M12 22 7.5 12h9z" fill="#9aa0a6"/></svg></button>
   <button id="btnCam" title="Đánh dấu camera tại đây" hidden>📷</button>
   <button id="btnLayer" title="Lớp bản đồ">🌐</button>
   <button id="btnVoice" class="on" title="Giọng nói">🔊</button>
@@ -148,7 +149,7 @@ body.night #steps div{border-color:#3c4043}body.night #spd{border-color:#5f6368}
 </div>
 
 <div id="toast"></div>
-<div id="diag" hidden><div id="diagBox"><h3>🔧 Kiểm tra app</h3><div id="diagOut"></div><button id="diagClose">Đóng</button></div></div>
+<div id="diag" hidden><div id="diagBox"><h3>🔧 Kiểm tra app</h3><div id="diagOut"></div><button id="diagVoice">🔊 Nghe thử giọng</button><button id="diagClose">Đóng</button></div></div>
 
 <script>
 'use strict';
@@ -301,10 +302,10 @@ map.on('dragstart', () => { if (S.nav) { S.follow = false; $('btnLoc').classList
 function onPos(p) {
   const c = p.coords;
   const ll = [c.latitude, c.longitude];
-  if (S.lastPos && hav(S.lastPos, ll) > 3) S.heading = bearing(S.lastPos, ll);
+  if (S.lastPos && hav(S.lastPos, ll) > 5 && (c.speed == null || c.speed > 1.5)) S.heading = bearing(S.lastPos, ll);
   if (c.heading != null && !isNaN(c.heading) && (c.speed || 0) > 1) S.heading = c.heading;
   S.speed = c.speed != null && !isNaN(c.speed) ? c.speed : (S.speed || 0);
-  S.lastPos = ll; S.me = ll; S.acc = c.accuracy || 10;
+  if (!S.lastPos || hav(S.lastPos, ll) > 5) S.lastPos = ll; S.me = ll; S.acc = c.accuracy || 10;
   if (!meMarker) {
     meMarker = L.marker(ll, {icon: meIcon, zIndexOffset: 1000}).addTo(map);
     accCircle = L.circle(ll, {radius: S.acc, color: '#1a73e8', weight: 1, fillOpacity: .1}).addTo(map);
@@ -619,6 +620,39 @@ function showSheet() {
 }
 $('btnSteps').onclick = () => { const s = $('steps'); s.style.display = s.style.display === 'block' ? 'none' : 'block'; };
 
+/* ============ XOAY BẢN ĐỒ THEO HƯỚNG ĐI ============ */
+S.headUp = store.get('headUp', true); S.rot = 0; S.rotPrev = 0; S.rotOn = false;
+function rotBtn() { $('btnRot').classList.toggle('on', S.headUp); $('btnRot').title = S.headUp ? 'Đang xoay theo hướng đi (bấm để giữ hướng Bắc)' : 'Hướng Bắc ở trên (bấm để xoay theo hướng đi)'; }
+rotBtn();
+$('btnRot').onclick = () => {
+  S.headUp = !S.headUp; store.set('headUp', S.headUp); rotBtn();
+  toast(S.headUp ? 'Bản đồ xoay theo hướng đi' : 'Hướng Bắc luôn ở trên');
+  if (!S.headUp) applyRot(false);
+  if (S.nav) { S.follow = true; navUpdate(); }
+};
+// Phóng to khung bản đồ bằng đường chéo màn hình, đặt vị trí xe ở giữa khung rồi xoay cả khung
+function applyRot(on) {
+  const el = map.getContainer();
+  if (!on) {
+    if (S.rotOn) {
+      S.rotOn = false; S.rot = 0; S.rotPrev = 0;
+      ['width', 'height', 'left', 'top', 'right', 'bottom', 'transform', 'transition', 'webkitTransform'].forEach(k => { el.style[k] = ''; });
+      map.invalidateSize({pan: false});
+    }
+    return;
+  }
+  const W = innerWidth, H = innerHeight, D = Math.ceil(Math.sqrt(W * W + H * H));
+  const cx = isLand() ? 210 + W / 2 : W / 2, cy = H * 0.66;
+  if (!S.rotOn || S.rotD !== D) {
+    S.rotOn = true; S.rotD = D;
+    Object.assign(el.style, {width: D + 'px', height: D + 'px', left: (cx - D / 2) + 'px', top: (cy - D / 2) + 'px', right: 'auto', bottom: 'auto', transition: 'transform .8s linear'});
+    map.invalidateSize({pan: false});
+  }
+  const h = S.heading || 0, d = ((h - S.rotPrev + 540) % 360) - 180;
+  S.rotPrev = h; S.rot += d;
+  el.style.webkitTransform = el.style.transform = `rotate(${-S.rot}deg)`;
+}
+
 /* ============ CAMERA GIAO THÔNG ============ */
 const camLayer = L.layerGroup().addTo(map);
 const camIcon = L.divIcon({className: 'cam', html: '📷', iconSize: [26, 26], iconAnchor: [13, 13]});
@@ -743,6 +777,7 @@ function beginNav(sim) {
 }
 function stopNav(msg) {
   S.nav = false; stopSim();
+  applyRot(false);
   $('top').hidden = false; $('banner').hidden = true; $('navbar').hidden = true; $('btnCam').hidden = true; $('camBadge').hidden = true;
   if (window.Android) Android.keepScreen(false);
   try { S.wake && S.wake.release(); } catch (e) {} S.wake = null;
@@ -856,6 +891,8 @@ function navUpdate() {
   // Bám theo người dùng
   if (S.follow) {
     const z = dNext < 200 ? 18 : ((S.speed || 0) > 15 ? 15 : fast ? 16 : 17);
+    if (S.headUp) { applyRot(true); map.setView(S.me, z, {animate: true, duration: .5}); return; }
+    applyRot(false);
     const size = map.getSize();
     const pt = map.project(S.me, z).subtract(isLand() ? [210, size.y * 0.15] : [0, size.y * 0.18]);
     map.setView(map.unproject(pt, z), z, {animate: true, duration: .5});
@@ -924,6 +961,7 @@ window.onDiag = json => {
     diagAdd(`Bộ đọc giọng nói: ${d.ttsReady ? '✅ sẵn sàng, đang dùng ' + d.ttsUsed : '❌ chưa sẵn sàng'} · công cụ mặc định: ${d.ttsDefault || 'không có'}`);
     diagAdd('Các công cụ giọng nói: ' + (d.ttsEngines.length ? d.ttsEngines.join(', ') : 'KHÔNG CÓ'));
     diagAdd('Giọng tiếng Việt: ' + d.viStatus);
+    if (d.ttsMsg) diagAdd('⚠️ ' + d.ttsMsg);
     diagAdd('Chứng chỉ đóng kèm: ' + (d.ssl ? '✅' : '❌') + ' · bộ kết nối: ' + d.tls);
     diagAdd('\n— Kết nối trực tiếp từ Android —');
     d.net.forEach(n => diagAdd(`${n.ok ? '✅' : '❌'} ${n.name}: ${n.res}`));
@@ -932,6 +970,7 @@ window.onDiag = json => {
 };
 $('btnDiag').onclick = runDiag;
 $('diagClose').onclick = () => { $('diag').hidden = true; };
+$('diagVoice').onclick = () => { if (window.Android && Android.testVoice) Android.testVoice(); else say('Xin chào. Đây là giọng dẫn đường.'); };
 
 function stopSim() { if (S.sim) { clearInterval(S.sim); S.sim = null; } }
 </script>

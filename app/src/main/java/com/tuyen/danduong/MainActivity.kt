@@ -194,6 +194,12 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     inner class Bridge {
         @JavascriptInterface fun startLocation() { main.post { requestLocation() } }
         @JavascriptInterface fun voiceSearch() { main.post { startVoice() } }
+        @JavascriptInterface fun testVoice() {
+            main.post {
+                if (ttsReady) say("Xin chào. Đây là giọng dẫn đường. Sau 200 mét, rẽ phải.")
+                else toast(if (ttsSearching) "Đang tìm bộ đọc, thử lại sau vài giây" else ttsMsg.ifEmpty { "Chưa có giọng đọc tiếng Việt" })
+            }
+        }
         @JavascriptInterface fun diag() {
             Thread {
                 val j = try { runDiag() } catch (e: Exception) { JSONObject().put("error", e.toString()).toString() }
@@ -272,6 +278,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val t = tts
         o.put("ttsDefault", try { t?.defaultEngine ?: "" } catch (_: Exception) { "" })
         o.put("ttsUsed", ttsUsed)
+        o.put("ttsMsg", ttsMsg)
         o.put("tls", try { Security.getProviders()[0].name } catch (_: Exception) { "?" })
         val eng = JSONArray(); try { t?.engines?.forEach { eng.put(it.label.toString() + " (" + it.name + ")") } } catch (_: Exception) {}
         o.put("ttsEngines", eng)
@@ -338,23 +345,38 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     }
 
     /* ---------- Giọng nói tiếng Việt ---------- */
-    // Dò lần lượt mọi bộ đọc trong máy, dùng bộ đầu tiên đọc được tiếng Việt
+    // Dò lần lượt mọi bộ đọc trong máy, dùng bộ đầu tiên đọc được tiếng Việt (Google, eSpeak NG, ...)
     private var ttsEngines: List<String>? = null
     private var ttsIdx = -1
     private var ttsUsed = ""
-    private var viMissingData = false
+    private var missingEngine: String? = null
+    private var ttsSearching = true
+    private var ttsMsg = ""
+
+    private fun reinitTts() {
+        try { tts?.shutdown() } catch (_: Exception) {}
+        ttsEngines = null; ttsIdx = -1; missingEngine = null; ttsReady = false; ttsSearching = true
+        tts = TextToSpeech(this, this)
+    }
 
     override fun onInit(status: Int) {
         val t = tts
+        val eng = if (ttsIdx >= 0) ttsEngines!![ttsIdx] else ((try { t?.defaultEngine } catch (_: Exception) { null }) ?: "")
         if (status == TextToSpeech.SUCCESS && t != null) {
-            val r = try { t.setLanguage(Locale("vi", "VN")) } catch (_: Exception) { TextToSpeech.LANG_NOT_SUPPORTED }
-            if (r >= TextToSpeech.LANG_AVAILABLE) {
-                ttsReady = true
-                ttsUsed = if (ttsIdx >= 0) ttsEngines!![ttsIdx] else ((try { t.defaultEngine } catch (_: Exception) { null }) ?: "mặc định")
-                t.setSpeechRate(1.0f)
-                return
+            for (loc in listOf(Locale("vi", "VN"), Locale("vi"))) {
+                val r = try { t.setLanguage(loc) } catch (_: Exception) { TextToSpeech.LANG_NOT_SUPPORTED }
+                if (r >= TextToSpeech.LANG_AVAILABLE) {
+                    ttsReady = true; ttsSearching = false; ttsUsed = eng.ifEmpty { "mặc định" }; ttsMsg = ""
+                    try {
+                        t.setAudioAttributes(android.media.AudioAttributes.Builder()
+                            .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build())
+                    } catch (_: Exception) {}
+                    t.setSpeechRate(1.0f)
+                    return
+                }
+                if (r == TextToSpeech.LANG_MISSING_DATA && missingEngine == null) missingEngine = eng
             }
-            if (r == TextToSpeech.LANG_MISSING_DATA) viMissingData = true
         }
         if (ttsEngines == null) ttsEngines = (try { t?.engines?.map { it.name } } catch (_: Exception) { null }) ?: emptyList()
         ttsIdx++
@@ -364,11 +386,15 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             tts = TextToSpeech(this, this, list[ttsIdx])
             return
         }
-        if (viMissingData) {
-            toast("Chưa tải giọng Tiếng Việt. Hãy tải giọng Tiếng Việt trong cài đặt giọng nói.")
-            try { startActivity(Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA)) } catch (_: Exception) {}
+        ttsSearching = false
+        val miss = missingEngine
+        if (miss != null) {
+            ttsMsg = "Bộ đọc $miss chưa tải giọng Tiếng Việt"
+            toast("Cần tải giọng Tiếng Việt cho bộ đọc. Đang mở cài đặt giọng nói...")
+            try { startActivity(Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA).setPackage(miss)) } catch (_: Exception) {}
         } else {
-            toast("Máy chưa có giọng đọc tiếng Việt. Hãy cập nhật 'Dịch vụ lời nói của Google' trên CH Play hoặc cài eSpeak NG.")
+            ttsMsg = "Không có bộ đọc nào hỗ trợ tiếng Việt (đã thử: " + list.joinToString() + ")"
+            toast("Máy chưa có giọng đọc tiếng Việt. Hãy cài eSpeak NG rồi mở lại app.")
         }
     }
 
@@ -382,6 +408,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         super.onResume()
         web.onResume()
         if (wantLocation) startUpdates()
+        // Vừa cài bộ đọc mới (ví dụ eSpeak NG) rồi quay lại app -> dò lại
+        if (!ttsReady && !ttsSearching) reinitTts()
     }
 
     override fun onPause() {
