@@ -24,6 +24,11 @@ jobs:
               sleep 20
             done
           done
+          # Bộ dữ liệu camera mở MapAtlas (CC BY 4.0) - thử các tên tệp có thể có cho Việt Nam
+          for n in VN vn VNM vnm; do
+            if curl -fsSL -A "$UA" --max-time 120 "https://mapatlas.eu/data/camera-index/$n.geojson" -o /tmp/mapatlas_vn.geojson && python3 -c "import json;d=json.load(open('/tmp/mapatlas_vn.geojson'));print('MapAtlas $n:',len(d.get('features',[])))"; then break; fi
+            rm -f /tmp/mapatlas_vn.geojson
+          done
           python3 tools/cams.py
 
       - name: Lưu vào repo nếu có dữ liệu mới
@@ -32,4 +37,4 @@ jobs:
           if [ "$N" -lt 10 ]; then echo "Ít dữ liệu ($N), giữ bản cũ"; git checkout -- app/src/main/assets/cams_vn.json; exit 0; fi
           git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
           git add app/src/main/assets/cams_vn.json
-          git diff --cached --quiet || (git commit -m "Cập nhật dữ liệu camera ($N camera)" && git push)
+          git diff --cached --quiet || (git commit -m "Cập nhật dữ liệu camera ($N camera)" && git pull --rebase && git push)

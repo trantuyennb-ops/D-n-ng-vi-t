@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [ main ]
-    paths: [ "tools/screens.py", ".github/workflows/screenshots.yml" ]
+    paths: [ "tools/screens.py", "tools/test_alerts.py", ".github/workflows/screenshots.yml" ]
 
 permissions:
   contents: write
@@ -25,10 +25,11 @@ jobs:
         run: |
           (cd app/src/main/assets && python -m http.server 8000 &) ; sleep 2
           python tools/screens.py
+          python tools/test_alerts.py || true
           ls -la shots
       - name: Đăng ảnh lên release "screenshots"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release delete screenshots --yes --cleanup-tag || true
-          gh release create screenshots shots/*.png --title "Ảnh màn hình app" --notes "Ảnh chụp tự động" --prerelease
+          gh release create screenshots shots/*.png shots/test_results.json --title "Ảnh màn hình app" --notes "Ảnh chụp tự động" --prerelease

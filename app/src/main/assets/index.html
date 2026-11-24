@@ -103,6 +103,17 @@ body.night #steps div{border-color:#3c4043}body.night #spd{border-color:#5f6368}
 #alts .tags{display:block;font-style:normal;margin-top:4px}
 #alts em{display:inline-block;font-style:normal;font-size:11px;font-weight:600;background:#e6f4ea;color:#137333;border-radius:8px;padding:1px 6px;margin:2px 4px 0 0}
 #alts em.rec{background:#fce8b2;color:#7a4f01}
+#freeBar{position:absolute;left:10px;bottom:10px;z-index:950;display:flex;align-items:center;padding:8px 12px;border-radius:16px;max-width:calc(100% - 90px)}
+#freeBar>*+*{margin-left:10px}
+#fSpd{width:54px;height:54px;border-radius:50%;border:3px solid #dadce0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:700;font-size:19px;flex:none}
+#fSpd small{font-size:10px;font-weight:400;color:#5f6368}
+#fSpd.over{border-color:#e53935;background:#e53935;color:#fff}#fSpd.over small{color:#fff}
+#fLim{width:54px;height:54px;border-radius:50%;border:6px solid #e53935;background:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:20px;color:#000;flex:none}
+#fLim.est{border-style:dashed}
+#fInfo{display:flex;flex-direction:column;font-size:13px;color:#5f6368;min-width:0}
+#fInfo b{color:#202124;font-size:14px}
+#fCam.warn{color:#b06000;font-weight:700}
+body.night #fInfo b{color:#e8eaed}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -155,6 +166,11 @@ body.night #steps div{border-color:#3c4043}body.night #spd{border-color:#5f6368}
   <button id="btnExit">Thoát</button>
 </div>
 
+<div id="freeBar" class="card" hidden>
+  <div id="fSpd"><span id="fSpdV">0</span><small>km/h</small></div>
+  <div id="fLim" hidden><span id="fLimV"></span></div>
+  <div id="fInfo"><b>Lái tự do</b><span id="fCam">Đang theo dõi camera và tốc độ</span></div>
+</div>
 <div id="toast"></div>
 <div id="diag" hidden><div id="diagBox"><h3>🔧 Kiểm tra app</h3><div id="diagOut"></div><button id="diagVoice">🔊 Nghe thử giọng</button><button id="diagClose">Đóng</button></div></div>
 
@@ -321,7 +337,7 @@ function onPos(p) {
   } else { meMarker.setLatLng(ll); accCircle.setLatLng(ll).setRadius(S.acc); }
   const svg = meMarker.getElement() && meMarker.getElement().querySelector('svg');
   if (svg) svg.style.transform = `rotate(${S.heading}deg)`;
-  if (S.nav) navUpdate();
+  if (S.nav) navUpdate(); else freeUpdate();
 }
 function startGPS() {
   if (window.Android && Android.startLocation) {
@@ -691,30 +707,116 @@ function applyRot(on) {
 
 /* ============ GIỚI HẠN TỐC ĐỘ THEO KHU VỰC (Thông tư 38/2024) ============ */
 // Trong khu đông dân cư: 60 (đường đôi) / 50 (đường hai chiều).
-// Ngoài khu đông dân cư: ô tô con 90 / 80, xe mô tô 70 / 60. Đường cao tốc theo biển báo.
-S.area = null; S.areaAt = null; S.areaT = 0;
-function estLimit(r, i, step) {
+// Ngoài khu đông dân cư: ô tô con 90 / 80, xe mô tô 70 / 60. Đường cao tốc: theo biển báo.
+// App không đọc được biển báo nên chỉ ƯỚC TÍNH; khi không chắc luôn lấy mức THẤP để an toàn:
+//  - coi là đường hai chiều (trừ khi bản đồ ghi rõ tốc độ)
+//  - chỉ coi là "ngoài khu dân cư" khi quanh đó KHÔNG có khu dân cư / nhà cửa trên bản đồ
+S.area = 'urban'; S.areaAt = null; S.areaT = 0; S.areaBusy = false;
+function isExpressway(step) {
+  if (!step) return false;
+  const name = (step.name || '') + ' ' + (step.ref || '');
+  if (/cao tốc|\bCT[.\s]?\d/i.test(name)) return true;
+  const it = step.intersections || [];
+  return it.some(x => (x.classes || []).indexOf('motorway') >= 0);
+}
+function estLimitFor(step) {
   if (S.profile === 'bike' || S.profile === 'foot') return null;
-  const name = ((step && (step.name + ' ' + (step.ref || ''))) || '');
-  if (/cao tốc|\bCT[.\s]?\d/i.test(name)) return null; // cao tốc: theo biển báo từng đoạn
-  const divided = (r.speeds[i] || 0) >= 19; // đường lớn (quốc lộ đôi) theo dữ liệu tuyến
-  if (S.area !== 'rural') return divided ? 60 : 50; // chưa rõ khu vực thì lấy mức thấp cho an toàn
-  if (S.profile === 'moto') return divided ? 70 : 60;
-  return divided ? 90 : 80;
+  if (isExpressway(step)) return null; // cao tốc: mỗi đoạn có biển riêng
+  if (S.area !== 'rural') return 50;
+  return S.profile === 'moto' ? 60 : 80;
+}
+function estLimit(r, i, step) { return estLimitFor(step); }
+// Xác định khu dân cư: hỏi bản đồ xem trong bán kính ~150 m có khu dân cư hoặc nhà cửa không
+async function detectArea(p) {
+  const q = `[out:json][timeout:8];(way(around:150,${p[0]},${p[1]})["landuse"~"residential|commercial|retail|industrial"];relation(around:150,${p[0]},${p[1]})["landuse"~"residential|commercial|retail"];way(around:100,${p[0]},${p[1]})["building"];node(around:300,${p[0]},${p[1]})["place"~"city|town|suburb|quarter|neighbourhood"];);out tags 25;`;
+  for (const host of OVERPASS) {
+    try {
+      const res = await fetchT(host + '?data=' + encodeURIComponent(q), 12000);
+      if (!res.ok) continue;
+      const els = (await res.json()).elements || [];
+      const landuse = els.some(e => e.tags && (e.tags.landuse || e.tags.place));
+      const buildings = els.filter(e => e.tags && e.tags.building).length;
+      return (landuse || buildings >= 4) ? 'urban' : 'rural';
+    } catch (e) {}
+  }
+  // Máy chủ bản đồ lỗi: dùng tên đơn vị hành chính; phường/thị trấn chắc chắn là đô thị, còn lại giữ nguyên
+  try {
+    const j = await (await fetchT(`${NOMINATIM}reverse?format=jsonv2&zoom=16&accept-language=vi&lat=${p[0]}&lon=${p[1]}`, 10000)).json();
+    if (/(^|, )(Phường|Thị trấn|Quận)\s/.test((j && j.display_name) || '')) return 'urban';
+  } catch (e) {}
+  return null;
 }
 function areaTick() {
-  if (!S.me) return;
-  if (S.areaAt && hav(S.areaAt, S.me) < 800 && Date.now() - S.areaT < 120000) return;
-  S.areaAt = S.me.slice(); S.areaT = Date.now();
-  const p = S.areaAt;
-  fetch(`${NOMINATIM}reverse?format=jsonv2&zoom=16&accept-language=vi&lat=${p[0]}&lon=${p[1]}`).then(r => r.json()).then(j => {
-    const t = (j && j.display_name) || '';
-    const a = /(^|, )(Phường|Thị trấn|Quận)\s/.test(t) ? 'urban' : /(^|, )(Xã|Đặc khu)\s/.test(t) ? 'rural' : null;
-    if (!a || a === S.area) return;
-    const prev = S.area; S.area = a;
-    if (prev && S.nav && (S.profile === 'car' || S.profile === 'moto'))
-      say(a === 'urban' ? 'Đi vào khu đông dân cư, chú ý giảm tốc độ' : 'Ra khỏi khu đông dân cư', true);
-  }).catch(() => {});
+  if (!S.me || S.areaBusy) return;
+  if (S.areaAt && hav(S.areaAt, S.me) < 400 && Date.now() - S.areaT < 90000) return;
+  S.areaAt = S.me.slice(); S.areaT = Date.now(); S.areaBusy = true;
+  detectArea(S.areaAt).then(a => {
+    S.areaBusy = false;
+    if (!a) return;
+    // Cần 2 lần liên tiếp cùng kết quả mới đổi, tránh nhảy qua lại ở ranh giới
+    if (a === S.area) { S.areaCand = null; return; }
+    if (S.areaCand !== a) { S.areaCand = a; S.areaAt = null; return; }
+    S.areaCand = null; S.area = a;
+    if ((S.nav || S.free) && (S.profile === 'car' || S.profile === 'moto'))
+      say(a === 'urban' ? 'Đi vào khu dân cư. Tốc độ tối đa khoảng 50 ki lô mét một giờ.'
+                        : 'Ra khỏi khu dân cư. Tốc độ tối đa khoảng ' + (S.profile === 'moto' ? 60 : 80) + ' ki lô mét một giờ, chú ý biển báo.', true);
+  }).catch(() => { S.areaBusy = false; });
+}
+// Thông báo khi giới hạn tốc độ thay đổi (phải ổn định 3 lần đo mới đọc, tránh đọc liên tục)
+function limitChanged(lim) {
+  if (lim === S.limShown) { S.limCand = null; return ''; }
+  if (S.limCand !== lim) { S.limCand = lim; S.limCandN = 1; return ''; }
+  if (++S.limCandN < 3) return '';
+  const first = S.limShown === undefined;
+  S.limShown = lim; S.limCand = null;
+  return (!first && lim) ? `Tốc độ tối đa ${lim} ki lô mét một giờ` : '';
+}
+
+/* ============ CHẾ ĐỘ LÁI TỰ DO: báo camera + tốc độ khi không dẫn đường ============ */
+S.free = false;
+function freeUpdate() {
+  const moving = (S.speed || 0) > 2.5; // > 9 km/h
+  const show = moving && !S.nav && $('sheet').hidden && (S.profile === 'car' || S.profile === 'moto');
+  if (!show) { if (S.free && (S.speed || 0) < 0.5) { S.freeStill = (S.freeStill || 0) + 1; if (S.freeStill > 60) { S.free = false; $('freeBar').hidden = true; } } return; }
+  S.freeStill = 0;
+  if (!S.free) { S.free = true; S.limShown = undefined; $('freeBar').hidden = false; }
+  const kmh = Math.round(S.speed * 3.6);
+  $('fSpdV').textContent = kmh;
+  areaTick();
+  // Camera phía trước: trong 800 m, nằm gần đúng hướng xe đang chạy
+  const look = S.speed > 11 ? 800 : 500;
+  let best = null;
+  allCams().forEach(c => {
+    if (Math.abs(c.lat - S.me[0]) > 0.012 || Math.abs(c.lng - S.me[1]) > 0.012) return;
+    const d = hav(S.me, [c.lat, c.lng]);
+    if (d > look) return;
+    const diff = Math.abs(((bearing(S.me, [c.lat, c.lng]) - S.heading + 540) % 360) - 180);
+    if (diff > 30 && d > 60) return; // không nằm phía trước
+    if (c.d != null && c.d !== '' && Math.abs(((+c.d - S.heading + 540) % 360) - 180) > 70) return; // camera chụp chiều ngược
+    if (!best || d < best.dist) best = Object.assign({dist: d}, c);
+  });
+  const camLim = best && parseInt(best.s);
+  const lim = camLim || estLimitFor(null);
+  $('fLim').hidden = !lim; if (lim) $('fLimV').textContent = lim;
+  $('fLim').classList.toggle('est', !camLim && !!lim);
+  const over = !!lim && kmh > lim + (camLim ? 2 : 5);
+  $('fSpd').classList.toggle('over', over);
+  let msg = limitChanged(lim);
+  if (best) {
+    $('fCam').textContent = '📷 ' + camLabel(best) + ' · ' + fmtDist(best.dist);
+    $('fCam').classList.add('warn');
+    const key = best.lat.toFixed(5) + ',' + best.lng.toFixed(5);
+    if (!S.spokenCam[key]) {
+      S.spokenCam[key] = Date.now(); beep();
+      msg = `Phía trước ${speakDist(best.dist)} có ${best.k === 'speed' ? 'camera bắn tốc độ' : 'camera giao thông'}` + (lim ? `, tốc độ tối đa ${lim} ki lô mét một giờ` : '');
+    }
+  } else {
+    $('fCam').textContent = 'Đang theo dõi camera và tốc độ'; $('fCam').classList.remove('warn');
+  }
+  // Quên các camera đã đi qua lâu (để lần sau đi lại vẫn được báo)
+  Object.keys(S.spokenCam).forEach(k => { if (Date.now() - S.spokenCam[k] > 10 * 60000) delete S.spokenCam[k]; });
+  if (over && Date.now() - (S.lastOver || 0) > 30000) { S.lastOver = Date.now(); beep(); msg = `Bạn đang chạy quá tốc độ. Tối đa ${lim} ki lô mét một giờ`; }
+  if (msg) say(msg, true);
 }
 
 /* ============ CAMERA GIAO THÔNG ============ */
@@ -764,7 +866,15 @@ function matchCams() {
     cs.forEach(c => {
       if (!bb.contains([c.lat, c.lng])) return; // lọc nhanh camera ngoài vùng tuyến đường
       const p = projFull([c.lat, c.lng], r);
-      if (p.d < 35) r.cams.push({lat: c.lat, lng: c.lng, along: p.along, k: c.k, s: c.s});
+      if (p.d >= 30) return;
+      if (c.d != null && c.d !== '') {
+        // hướng đi của tuyến tại vị trí camera
+        let idx = 0; while (idx < r.cum.length - 2 && r.cum[idx + 1] < p.along) idx++;
+        const rb = bearing(r.coords[idx], r.coords[idx + 1]);
+        const diff = Math.abs(((+c.d - rb + 540) % 360) - 180);
+        if (diff > 70) return; // camera chụp chiều ngược lại
+      }
+      r.cams.push({lat: c.lat, lng: c.lng, along: p.along, k: c.k, s: c.s});
     });
     r.cams.sort((a, b) => a.along - b.along);
   });
@@ -850,7 +960,7 @@ function startNav(sim) {
   beginNav(sim);
 }
 function beginNav(sim) {
-  S.nav = true; S.follow = true; S.hintIdx = 0; S.spoken = {}; S.offCount = 0; S.spokenCam = {}; S.lastLim = undefined; S.areaAt = null;
+  S.nav = true; S.follow = true; S.hintIdx = 0; S.spoken = {}; S.offCount = 0; S.spokenCam = {}; S.limShown = undefined; S.areaAt = null; S.free = false; $('freeBar').hidden = true;
   $('btnCam').hidden = false;
   $('top').hidden = true; $('sheet').hidden = true; $('banner').hidden = false; $('navbar').hidden = false;
   $('btnLoc').classList.add('on');
@@ -938,7 +1048,8 @@ function navUpdate() {
   $('spdV').textContent = kmh;
 
   // Biển giới hạn tốc độ + cảnh báo quá tốc độ
-  const exact = r.maxspeed[pr.i] || null;
+  const camNear = r.cams.find(c => Math.abs(c.along - pr.along) < 300 && parseInt(c.s));
+  const exact = r.maxspeed[pr.i] || (camNear ? parseInt(camNear.s) : null);
   const lim = exact || estLimit(r, pr.i, r.steps[k]);
   $('lim').hidden = !lim; if (lim) $('limV').textContent = lim;
   $('lim').classList.toggle('est', !exact && !!lim);
@@ -946,8 +1057,7 @@ function navUpdate() {
   areaTick();
   $('spd').classList.toggle('over', over);
   let limMsg = '';
-  if (exact && S.lastLim !== undefined && lim !== S.lastLim && (!S.lastLim || lim < S.lastLim)) limMsg = `Tốc độ tối đa ${lim} ki lô mét một giờ`;
-  S.lastLim = lim;
+  limMsg = limitChanged(lim);
   if (over && Date.now() - (S.lastOver || 0) > 30000) { S.lastOver = Date.now(); beep(); limMsg = `Bạn đang chạy quá tốc độ. Tối đa ${lim} ki lô mét một giờ`; }
 
   // Chỉ dẫn làn đường
@@ -965,7 +1075,7 @@ function navUpdate() {
     const ahead = Math.max(0, cam.along - pr.along);
     $('camBadge').hidden = false; $('camBadge').textContent = '📷 ' + camLabel(cam) + ' · ' + fmtDist(ahead) + (cam.s ? ' · tối đa ' + cam.s : '');
     const key = cam.lat.toFixed(5) + ',' + cam.lng.toFixed(5);
-    if (!S.spokenCam[key] && ahead > 40) { S.spokenCam[key] = 1; beep(); const cl = cam.k === 'speed' ? 'camera bắn tốc độ' : 'camera giao thông', cs = parseInt(cam.s) || lim; camMsg = `Phía trước ${speakDist(ahead)} có ${cl}` + (cs ? `, tốc độ tối đa ${cs} ki lô mét một giờ` : ''); }
+    if (!S.spokenCam[key] && ahead > 15) { S.spokenCam[key] = Date.now(); beep(); const cl = cam.k === 'speed' ? 'camera bắn tốc độ' : 'camera giao thông', cs = parseInt(cam.s) || lim; camMsg = `Phía trước ${speakDist(ahead)} có ${cl}` + (cs ? `, tốc độ tối đa ${cs} ki lô mét một giờ` : ''); }
   } else $('camBadge').hidden = true;
 
   // Giọng nói
