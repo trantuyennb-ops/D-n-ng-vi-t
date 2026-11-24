@@ -28,9 +28,13 @@ jobs:
       - name: Tải dữ liệu camera giao thông Việt Nam (OpenStreetMap)
         continue-on-error: true
         run: |
-          Q='[out:json][timeout:170];area["ISO3166-1"="VN"][admin_level=2]->.vn;(node["highway"="speed_camera"](area.vn);node["enforcement"](area.vn);node["man_made"="surveillance"]["surveillance:type"~"camera|ALPR"]["surveillance"="traffic"](area.vn););out body;relation["type"="enforcement"](area.vn);node(r:"device");out body;'
-          for u in https://overpass-api.de/api/interpreter https://overpass.kumi.systems/api/interpreter https://overpass.private.coffee/api/interpreter; do
-            if curl -fsS --max-time 200 --data-urlencode "data=$Q" "$u" -o /tmp/cams.json && python3 -c "import json;json.load(open('/tmp/cams.json'))"; then echo "OK $u"; break; fi
+          Q='[out:json][timeout:180][bbox:8.0,102.0,23.5,110.0];(node["highway"="speed_camera"];node["enforcement"];node["man_made"="surveillance"]["surveillance"="traffic"];);out body;relation["type"="enforcement"];node(r:"device");out body;'
+          UA="DanDuongViet/1.0 (+https://github.com/trantuyennb-ops/D-n-ng-vi-t)"
+          for u in https://overpass-api.de/api/interpreter https://overpass.private.coffee/api/interpreter https://overpass.kumi.systems/api/interpreter https://maps.mail.ru/osm/tools/overpass/api/interpreter; do
+            for try in 1 2; do
+              if curl -fsS -A "$UA" -H "Accept: */*" --max-time 240 --data-urlencode "data=$Q" "$u" -o /tmp/cams.json && python3 -c "import json;json.load(open('/tmp/cams.json'))"; then echo "OK $u"; break 2; fi
+              sleep 20
+            done
           done
           python3 tools/cams.py
 
