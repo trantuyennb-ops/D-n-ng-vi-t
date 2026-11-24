@@ -840,7 +840,7 @@ function drawCams() {
     const m = L.marker([c.lat, c.lng], {icon: camIcon});
     m.bindPopup(c.user !== undefined
       ? `<div class="pop"><b>📷 Camera bạn đánh dấu</b><button onclick="App.delCam(${c.user})">Xóa camera này</button></div>`
-      : `<div class="pop"><b>📷 ${camLabel(c)}</b>${c.s ? '<small>Tốc độ tối đa: ' + esc(c.s) + ' km/h</small>' : ''}<small>Nguồn: OpenStreetMap</small></div>`);
+      : `<div class="pop"><b>📷 ${camLabel(c)}</b>${c.s ? '<small>Tốc độ tối đa: ' + esc(c.s) + ' km/h</small>' : ''}<small>Nguồn: OpenStreetMap, <a href="https://mapatlas.eu">MapAtlas</a> (CC BY 4.0)</small></div>`);
     camLayer.addLayer(m);
   });
 }
