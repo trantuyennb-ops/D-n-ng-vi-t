@@ -21,7 +21,7 @@ button{font:inherit;cursor:pointer;border:0}
 .row input:focus{border-color:#1a73e8;background:#fff}
 .dot{width:12px;height:12px;border-radius:50%;flex:none}
 .dot.g{background:#1a73e8;box-shadow:0 0 0 3px #d2e3fc}.dot.r{background:#ea4335;box-shadow:0 0 0 3px #fad2cf}
-#swap,#clr{width:38px;height:38px;border-radius:10px;background:#f1f3f4;font-size:18px}
+#swap,#clr,#btnMic{width:38px;height:38px;border-radius:10px;background:#f1f3f4;font-size:18px}
 #modes{display:flex;gap:6px;overflow-x:auto}
 #modes button{flex:1;white-space:nowrap;padding:8px 6px;border-radius:20px;background:#f1f3f4;font-size:14px}
 #modes button.on{background:#1a73e8;color:#fff}
@@ -99,7 +99,7 @@ body.night #steps div{border-color:#3c4043}body.night #spd{border-color:#5f6368}
 
 <div id="top" class="card">
   <div class="row"><span class="dot g"></span><input id="inFrom" placeholder="Vị trí của bạn" autocomplete="off"><button id="swap" title="Đổi chiều">⇅</button></div>
-  <div class="row"><span class="dot r"></span><input id="inTo" placeholder="Tìm điểm đến..." autocomplete="off"><button id="clr" title="Xóa">✕</button></div>
+  <div class="row"><span class="dot r"></span><input id="inTo" placeholder="Tìm điểm đến..." autocomplete="off"><button id="btnMic" title="Tìm bằng giọng nói" hidden><svg viewBox="0 0 24 24" width="22" height="22"><path fill="#1a73e8" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg></button><button id="clr" title="Xóa">✕</button></div>
   <div id="sugg"></div>
   <div id="modes">
     <button data-p="car" class="on">🛵 Xe máy/Ô tô</button>
@@ -325,6 +325,16 @@ function parseCoord(q) {
   const m = q.trim().match(/^(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)$/);
   return m ? {lat: +m[1], lng: +m[2], name: `${m[1]}, ${m[2]}`} : null;
 }
+async function photon(q, opt) {
+  try {
+    const c = map.getCenter();
+    const j = await (await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&lat=${c.lat}&lon=${c.lng}&limit=10`, opt)).json();
+    return (j.features || []).filter(f => !f.properties.countrycode || f.properties.countrycode === 'VN').map(f => {
+      const p = f.properties, sub = [p.street, p.district, p.city, p.county, p.state].filter(Boolean).join(', ');
+      return {lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0], name: p.name || sub.split(', ')[0] || q, sub};
+    });
+  } catch (e) { if (e.name === 'AbortError') throw e; return []; }
+}
 function showSugg(items) {
   const box = $('sugg');
   box.innerHTML = '';
@@ -359,13 +369,15 @@ function onSearchInput(e) {
       const b = map.getBounds().pad(2);
       const url = `${NOMINATIM}search?format=jsonv2&addressdetails=0&limit=8&countrycodes=vn&accept-language=vi`
         + `&viewbox=${b.getWest()},${b.getNorth()},${b.getEast()},${b.getSouth()}&q=${encodeURIComponent(q)}`;
-      const res = await fetch(url, searchCtrl ? {signal: searchCtrl.signal} : {});
-      const data = await res.json();
-      if (!data.length) { showSugg([{icon: '⚠', name: 'Không tìm thấy kết quả', none: true}]); return; }
-      showSugg(data.map(r => {
+      const opt = searchCtrl ? {signal: searchCtrl.signal} : {};
+      const data = await (await fetch(url, opt)).json();
+      let items = data.map(r => {
         const parts = r.display_name.split(', ');
         return {lat: +r.lat, lng: +r.lon, name: r.name || parts[0], sub: parts.slice(1, 4).join(', ')};
-      }));
+      });
+      if (!items.length) items = await photon(q, opt);
+      if (!items.length) { showSugg([{icon: '⚠', name: 'Không tìm thấy kết quả — thử nói hoặc gõ có dấu', none: true}]); return; }
+      showSugg(items);
     } catch (err) { if (err.name !== 'AbortError') toast('Lỗi tìm kiếm: ' + (err.message || err) + ' — bấm 🔧 để kiểm tra', 5000); }
   }, 600);
 }
@@ -400,6 +412,14 @@ function setDest(d) {
   destMarker.setLatLng([d.lat, d.lng]).addTo(map);
   route();
 }
+if (window.Android && Android.voiceSearch) $('btnMic').hidden = false;
+$('btnMic').onclick = () => { S.activeInput = 'to'; toast('🎤 Hãy nói tên điểm đến...', 3000); Android.voiceSearch(); };
+window.onVoice = text => {
+  if (!text) return;
+  const inp = $('inTo'); inp.value = text; S.activeInput = 'to';
+  toast('Đang tìm: ' + text);
+  onSearchInput({target: inp});
+};
 $('swap').onclick = () => {
   const from = S.origin || (S.me ? {lat: S.me[0], lng: S.me[1], name: 'Vị trí của bạn'} : null);
   if (!S.dest || !from) return;

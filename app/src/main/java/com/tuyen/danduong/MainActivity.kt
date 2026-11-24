@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
 import android.view.WindowManager
 import android.webkit.GeolocationPermissions
@@ -166,6 +167,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     /* ---------- Cầu nối JavaScript <-> Android ---------- */
     inner class Bridge {
         @JavascriptInterface fun startLocation() { main.post { requestLocation() } }
+        @JavascriptInterface fun voiceSearch() { main.post { startVoice() } }
         @JavascriptInterface fun diag() {
             Thread {
                 val j = try { runDiag() } catch (e: Exception) { JSONObject().put("error", e.toString()).toString() }
@@ -180,6 +182,29 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 if (on) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             }
+        }
+    }
+
+    /* ---------- Tìm kiếm bằng giọng nói ---------- */
+    private fun startVoice() {
+        val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "vi-VN")
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "vi-VN")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Nói tên điểm đến...")
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+        }
+        try { startActivityForResult(i, 2) }
+        catch (e: Exception) { toast("Máy chưa có tính năng nhận giọng nói. Hãy cài ứng dụng \"Google\" từ CH Play.") }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 2) {
+            val text = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull() ?: ""
+            if (text.isEmpty()) toast("Không nghe rõ, hãy thử lại")
+            web.evaluateJavascript("window.onVoice&&onVoice(" + JSONObject.quote(text) + ")", null)
         }
     }
 
